@@ -890,21 +890,43 @@ async function runPathAnalysis(event) {
   const data = Object.fromEntries(new FormData(event.currentTarget).entries());
   const result = await api(`/api/path-analysis?${paramsFrom(data)}`);
   const first = result.first_match;
+  const hitRows = (result.hit_path || [])
+    .map(
+      (item) => `<tr class="${item.effective ? "hit-row" : ""}">
+        <td>${escapeHtml(item.order)}</td>
+        <td>${item.effective ? "effective" : "later match"}</td>
+        <td>${escapeHtml(item.policy.device_name)}</td>
+        <td>${escapeHtml(item.policy.rule_name)}</td>
+        <td>${escapeHtml(item.policy.action)}</td>
+        <td>${textList(item.policy.source_zones, 2)}<span class="arrow">→</span>${textList(item.policy.destination_zones, 2)}</td>
+        <td>${textList(item.policy.source_addresses, 3)}<span class="arrow">→</span>${textList(item.policy.destination_addresses, 3)}</td>
+        <td>${textList(item.policy.services, 3)}</td>
+        <td>${escapeHtml([...(item.matched_fields || []), ...(item.wildcard_fields || []).map((field) => `${field}:any`)].join(", "))}</td>
+      </tr>`
+    )
+    .join("");
   $("#path-result").innerHTML = `
-    <article class="card">
-      <div class="card-title"><span>First Match</span><span>${result.matched_count} candidates</span></div>
+    <article class="card hit-summary ${first ? "hit-allow" : "hit-deny"}">
+      <div class="card-title"><span>Final Action: ${escapeHtml(result.final_action)}</span><span>${result.matched_count} matches / ${result.checked_count} checked</span></div>
       ${
         first
-          ? `<p><strong>${escapeHtml(first.rule_name)}</strong> / ${escapeHtml(first.action)} / ${escapeHtml(first.device_name)}</p>
+          ? `<p><strong>${escapeHtml(first.rule_name)}</strong> is the first effective match at order ${escapeHtml(result.first_match_order || "")} on ${escapeHtml(first.device_name)}.</p>
              <p>${textList(first.source_zones)} ${textList(first.source_addresses)} <span class="arrow">→</span> ${textList(first.destination_zones)} ${textList(first.destination_addresses)}</p>`
-          : "<p>No matching policy.</p>"
+          : "<p>No enabled rule matched this traffic in the selected scope. The result is implicit deny.</p>"
       }
     </article>
     <article class="card">
-      <div class="card-title"><span>Matched Rules</span><span>Top 100</span></div>
-      <div class="rule-list">${result.matched_policies
-        .map((p) => `<div><strong>${escapeHtml(p.rule_name)}</strong><span>${escapeHtml(p.action)} line ${escapeHtml(p.line_no || "")}</span></div>`)
-        .join("")}</div>
+      <div class="card-title"><span>Hit Path</span><span>First 100 matches</span></div>
+      <div class="table-wrap compact">
+        <table>
+          <thead><tr><th>Order</th><th>Role</th><th>Device</th><th>Rule</th><th>Action</th><th>Zone</th><th>Address</th><th>Service</th><th>Matched By</th></tr></thead>
+          <tbody>${hitRows || '<tr><td colspan="9">No matching enabled policy.</td></tr>'}</tbody>
+        </table>
+      </div>
+    </article>
+    <article class="card">
+      <div class="card-title"><span>Path Notes</span><span>${(result.later_matches || []).length} later matches</span></div>
+      <p>${first ? "Later matching rules are shown for troubleshooting, but they do not take effect because the first matching rule stops evaluation." : "Add a specific allow rule before the implicit deny if this traffic should be permitted."}</p>
     </article>`;
 }
 

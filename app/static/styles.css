@@ -621,6 +621,19 @@ tbody tr:hover {
   font-weight: 700;
 }
 
+.hit-summary {
+  border-left: 4px solid var(--primary);
+}
+
+.hit-summary.hit-deny {
+  border-left-color: var(--danger);
+}
+
+.hit-row {
+  background: #eaf3fb;
+  font-weight: 700;
+}
+
 .topology {
   display: grid;
   gap: 8px;

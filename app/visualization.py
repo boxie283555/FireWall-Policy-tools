@@ -39,32 +39,92 @@ def filter_policies(policies: list[PolicyRule], query: PolicyQuery) -> list[Poli
 
 
 def path_analysis(policies: list[PolicyRule], request: PolicyPathRequest) -> dict[str, Any]:
-    query = PolicyQuery(
-        vendor=request.vendor,
-        device_name=request.device_name,
-        source=request.source,
-        destination=request.destination,
-        service=request.service,
-        application=request.application,
-        user=request.user,
-        source_zone=request.source_zone,
-        destination_zone=request.destination_zone,
-    )
-    candidates = filter_policies([p for p in policies if p.enabled], query)
-    candidates = sorted(candidates, key=lambda p: (p.device_name, p.line_no or 10**9, p.rule_name))
-    first_match = candidates[0] if candidates else None
-    shadowed = []
-    for idx, earlier in enumerate(candidates):
-        for later in candidates[idx + 1 :]:
-            if _covers(earlier, later):
-                shadowed.append({"by": _policy_summary(earlier), "policy": _policy_summary(later)})
+    scoped = [p for p in policies if p.enabled]
+    if request.vendor:
+        scoped = [p for p in scoped if p.vendor.value == request.vendor]
+    if request.device_name:
+        scoped = [p for p in scoped if p.device_name == request.device_name]
+    scoped = sorted(scoped, key=lambda p: (p.vendor.value, p.device_name, p.line_no or 10**9, p.rule_name))
+
+    candidates: list[PolicyRule] = []
+    hit_path: list[dict[str, Any]] = []
+    first_match: PolicyRule | None = None
+    first_match_order: int | None = None
+    for order, policy in enumerate(scoped, start=1):
+        match = _policy_hit_match(policy, request)
+        if not match["matched"]:
+            continue
+        candidates.append(policy)
+        entry = {
+            "order": order,
+            "effective": first_match is None,
+            "policy": _policy_summary(policy),
+            "matched_fields": match["matched_fields"],
+            "wildcard_fields": match["wildcard_fields"],
+        }
+        hit_path.append(entry)
+        if first_match is None:
+            first_match = policy
+            first_match_order = order
+
+    later_matches = hit_path[1:]
+    final_action = first_match.action if first_match else "implicit-deny"
+    shadowed = [
+        {"by": _policy_summary(first_match), "policy": item["policy"]}
+        for item in later_matches
+        if first_match is not None
+    ]
     return {
         "request": request.model_dump(),
         "first_match": _policy_summary(first_match) if first_match else None,
+        "first_match_order": first_match_order,
+        "final_action": final_action,
+        "checked_count": len(scoped),
         "matched_count": len(candidates),
+        "hit_path": hit_path[:100],
+        "later_matches": later_matches[:100],
         "matched_policies": [_policy_summary(p) for p in candidates[:100]],
         "shadowed": shadowed[:50],
+        "implicit_deny": first_match is None,
     }
+
+
+def _policy_hit_match(policy: PolicyRule, request: PolicyPathRequest) -> dict[str, Any]:
+    checks = [
+        ("source_zone", request.source_zone, policy.source_zones),
+        ("destination_zone", request.destination_zone, policy.destination_zones),
+        ("source", request.source, policy.source_addresses),
+        ("destination", request.destination, policy.destination_addresses),
+        ("service", request.service, policy.services),
+        ("application", request.application, policy.applications),
+        ("user", request.user, policy.users),
+    ]
+    matched_fields: list[str] = []
+    wildcard_fields: list[str] = []
+    for field_name, requested, policy_values in checks:
+        if not requested:
+            continue
+        relation = _field_hit_relation(policy_values, requested)
+        if relation == "none":
+            return {"matched": False, "matched_fields": matched_fields, "wildcard_fields": wildcard_fields}
+        if relation == "wildcard":
+            wildcard_fields.append(field_name)
+        else:
+            matched_fields.append(field_name)
+    return {"matched": True, "matched_fields": matched_fields, "wildcard_fields": wildcard_fields}
+
+
+def _field_hit_relation(policy_values: list[str], requested: str) -> str:
+    if requested.lower().strip('"') in {"any", "all", "*"}:
+        return "wildcard"
+    if _has_any(policy_values):
+        return "wildcard"
+    needle = requested.lower().strip('"')
+    for value in policy_values:
+        normalized = value.lower().strip('"')
+        if needle == normalized or needle in normalized or normalized in needle:
+            return "matched"
+    return "none"
 
 
 def zone_matrix(policies: list[PolicyRule]) -> dict[str, Any]:
