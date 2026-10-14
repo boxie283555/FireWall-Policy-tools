@@ -6,7 +6,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.analyzer import analyze_policies
-from app.device_access import fetch_running_config, test_device_connection
+from app.device_access import FetchConfigError, fetch_running_config, test_device_connection
 from app.models import ChangeRequest, DeviceConnectionRequest, DeviceCredentialRequest, ImportRequest, PolicyPrecheckRequest, Vendor
 from app.parser import parse_config
 from app.precheck import precheck_policy_request
@@ -90,8 +90,8 @@ def api_device_connections():
 def api_upsert_device_connection(request: DeviceConnectionRequest):
     if request.vendor not in Vendor:
         raise HTTPException(status_code=400, detail="Unsupported vendor")
-    if request.protocol not in {"ssh", "telnet"}:
-        raise HTTPException(status_code=400, detail="Only SSH and Telnet are supported.")
+    if request.protocol not in {"ssh", "telnet", "api_https", "netconf"}:
+        raise HTTPException(status_code=400, detail="Only SSH, Telnet, API/HTTPS, and NETCONF are supported.")
     return upsert_device_connection(request)
 
 
@@ -129,7 +129,12 @@ def api_fetch_device_config(device_id: int, credentials: DeviceCredentialRequest
             "warnings": result.warnings,
             "commands": fetched.command_log,
             "config_size": len(fetched.config_text),
+            "config_preview": fetched.config_text[:8000],
+            "session_preview": fetched.session_text[-8000:],
         }
+    except FetchConfigError as exc:
+        update_device_connection_status(device_id, "fetch_failed", str(exc))
+        raise HTTPException(status_code=400, detail=exc.payload()) from exc
     except Exception as exc:
         update_device_connection_status(device_id, "fetch_failed", str(exc))
         raise HTTPException(status_code=400, detail=f"Fetch failed: {exc}") from exc

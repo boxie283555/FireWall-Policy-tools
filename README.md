@@ -12,7 +12,7 @@ A web-based firewall policy management tool. It currently supports importing and
 - Policy visualization: path analysis, matrix view, topology view, dependency graph, and rule order view
 - Policy and NAT analysis: conflicts, duplicates, shadowed or never-hit rules, overly broad rules, risky ports/applications, cross-zone risk, broad NAT, duplicate NAT, and inbound NAT exposure
 - Change precheck: detects conflicts, overlap, mutual exclusion, and recommends placement before adding a policy
-- Device access: add a management IP in the GUI, test SSH/Telnet connectivity, fetch running configuration, and import it automatically
+- Device access: add a management IP in the GUI, test SSH, Telnet, API/HTTPS, or NETCONF connectivity, fetch running configuration, and import it automatically
 - Local persistence: imported results and request records are stored in SQLite
 
 ## Docker Installation
@@ -188,12 +188,19 @@ chmod +x scripts/deploy.sh
 The `Device Access` page fetches configuration directly from firewalls:
 
 - Vendors: Cisco ASA, Palo Alto, Fortinet, Huawei
-- Protocols: SSH and Telnet
+- Protocols: SSH, Telnet, API/HTTPS, and NETCONF
 - Saved fields: device name, vendor, management IP, protocol, port, username, notes
 - Not saved: password, enable password, token
 - A successful fetch is parsed and imported automatically
 
-Default commands by vendor:
+Recommended online fetch methods:
+
+- Palo Alto: use `API / HTTPS` on port `443`. In the password field, enter either a PAN-OS API key or the account password. If a password is entered, the tool tries PAN-OS XML API key generation and then exports the configuration.
+- Fortinet: use `API / HTTPS` on port `443`. In the password field, enter a Fortinet API token.
+- Huawei: use `NETCONF` on port `830`. Enter the NETCONF username and password.
+- Cisco ASA: use `SSH` or `Telnet`. ASA API support depends heavily on version and installed REST API components, so CLI fetch remains the default.
+
+Default SSH/Telnet commands by vendor:
 
 - Cisco ASA: `terminal pager 0`, `show running-config`
 - Palo Alto: `set cli pager off`, `set cli config-output-format set`, `configure`, `show`

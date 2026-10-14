@@ -132,11 +132,13 @@
             <select name="protocol" required>
               <option value="ssh">SSH</option>
               <option value="telnet">Telnet</option>
+              <option value="api_https">API / HTTPS</option>
+              <option value="netconf">NETCONF</option>
             </select>
             <input name="host" placeholder="Management IP, for example 192.168.20.1" required />
             <input name="port" type="number" min="1" max="65535" value="22" placeholder="Port" required />
             <input name="username" placeholder="Username" required />
-            <input name="password" type="password" autocomplete="new-password" placeholder="Password, used only for this test/fetch" />
+            <input name="password" type="password" autocomplete="new-password" placeholder="Password, API token, or API key; used only for this test/fetch" />
             <input name="enable_password" type="password" autocomplete="new-password" placeholder="Enable password, optional for Cisco ASA" />
             <label class="checkline">
               <input name="enable_password_required" type="checkbox" />
@@ -149,7 +151,7 @@
               <button class="primary" id="device-save-fetch" type="button">Save and Fetch Config</button>
             </div>
           </form>
-          <pre id="device-result" class="result"></pre>
+          <div id="device-result" class="result"></div>
         </div>
         <div class="panel">
           <h2>Configured Devices</h2>

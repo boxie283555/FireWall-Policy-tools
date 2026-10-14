@@ -1,6 +1,6 @@
 const titles = {
   dashboard: ["Dashboard", "Device policy inventory and risk status."],
-  devices: ["Device Access", "Add firewall management IPs and fetch running configuration over SSH."],
+  devices: ["Device Access", "Add firewall management IPs and fetch running configuration over SSH, Telnet, API/HTTPS, or NETCONF."],
   import: ["Import Config", "Load ASA, PAN-OS, Fortinet, or Huawei configuration files."],
   policies: ["Access Rules", "Query by source, destination, service, application, user, zone, and action."],
   nat: ["NAT Rules", "Query NAT policies, translations, and NAT risk findings."],
@@ -22,9 +22,27 @@ const debounce = (fn, delay = 250) => {
   };
 };
 
+class ApiError extends Error {
+  constructor(message, detail) {
+    super(message);
+    this.name = "ApiError";
+    this.detail = detail;
+  }
+}
+
 async function api(path, options = {}) {
   const response = await fetch(path, options);
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) {
+    const text = await response.text();
+    let detail = text;
+    try {
+      detail = JSON.parse(text).detail;
+    } catch {
+      detail = text;
+    }
+    const message = typeof detail === "string" ? detail : detail?.error || JSON.stringify(detail);
+    throw new ApiError(message, detail);
+  }
   return response.json();
 }
 
@@ -357,33 +375,45 @@ async function saveDeviceConnection() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload.connection),
   });
-  $("#device-result").textContent = JSON.stringify({ saved: device, note: "Password was not saved. Enter it in the form when testing or fetching." }, null, 2);
+  renderDeviceResult({ saved: device, note: "Password was not saved. Enter it in the form when testing or fetching." });
   await loadDevices();
   return { device, credentials: payload.credentials };
 }
 
 async function testDeviceConnection(deviceId, credentials) {
   if (!credentials.password) throw new Error("Please enter the device password.");
-  const result = await api(`/api/device-connections/${deviceId}/test`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(credentials),
-  });
-  $("#device-result").textContent = JSON.stringify(result, null, 2);
-  await loadDevices();
+  try {
+    const result = await api(`/api/device-connections/${deviceId}/test`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(credentials),
+    });
+    renderDeviceResult(result);
+  } catch (error) {
+    renderDeviceResult(errorResult(error));
+    throw error;
+  } finally {
+    await loadDevices();
+  }
 }
 
 async function fetchDeviceConfig(deviceId, credentials) {
   if (!credentials.password) throw new Error("Please enter the device password.");
-  const result = await api(`/api/device-connections/${deviceId}/fetch`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(credentials),
-  });
-  $("#device-result").textContent = JSON.stringify(result, null, 2);
-  await loadInventory();
-  await loadDashboard();
-  await loadDevices();
+  try {
+    const result = await api(`/api/device-connections/${deviceId}/fetch`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(credentials),
+    });
+    renderDeviceResult(result);
+    await loadInventory();
+    await loadDashboard();
+  } catch (error) {
+    renderDeviceResult(errorResult(error));
+    throw error;
+  } finally {
+    await loadDevices();
+  }
 }
 
 async function handleDeviceRowAction(action, deviceId, devices) {
@@ -399,12 +429,48 @@ async function handleDeviceRowAction(action, deviceId, devices) {
     form.elements["username"].value = device.username;
     form.elements["enable_password_required"].checked = Boolean(device.enable_password_required);
     form.elements["notes"].value = device.notes || "";
-    $("#device-result").textContent = "Device profile loaded into the form. Passwords are not saved; enter the password again before testing or fetching.";
+    syncDeviceProtocolFields();
+    renderDeviceResult({ note: "Device profile loaded into the form. Passwords are not saved; enter the password again before testing or fetching." });
     return;
   }
   const credentials = deviceFormPayload().credentials;
   if (action === "test-device") await testDeviceConnection(deviceId, credentials);
   if (action === "fetch-device") await fetchDeviceConfig(deviceId, credentials);
+}
+
+function renderDeviceResult(result) {
+  const summary = {
+    status: result.status,
+    error: result.error,
+    note: result.note,
+    device_name: result.device_name,
+    vendor: result.vendor,
+    saved: result.saved,
+    warnings: result.warnings,
+    commands: result.commands,
+    config_size: result.config_size,
+    detail: result.detail,
+    preview: result.preview,
+  };
+  $("#device-result").innerHTML = `
+    <pre>${escapeHtml(JSON.stringify(summary, null, 2))}</pre>
+    ${
+      result.config_preview
+        ? `<h3>Fetched Configuration Preview</h3><pre>${escapeHtml(result.config_preview)}</pre>`
+        : ""
+    }
+    ${
+      result.session_preview
+        ? `<h3>Raw Session Preview</h3><pre>${escapeHtml(result.session_preview)}</pre>`
+        : ""
+    }`;
+}
+
+function errorResult(error) {
+  if (error instanceof ApiError && typeof error.detail === "object" && error.detail) {
+    return { status: "error", ...error.detail };
+  }
+  return { status: "error", error: error.message || String(error) };
 }
 
 async function loadAnalysis() {
@@ -929,11 +995,30 @@ $("#path-form").addEventListener("submit", runPathAnalysis);
 $("#dependency-search-form").addEventListener("submit", (event) => runDependencyObjectSearch(event).catch((error) => alert(error.message)));
 $("#policy-dependency-search-form").addEventListener("submit", (event) => runPolicyDependencySearch(event).catch((error) => alert(error.message)));
 $("#precheck-btn").addEventListener("click", () => runPolicyPrecheck().catch((error) => alert(error.message)));
-$("#device-form").elements["protocol"].addEventListener("change", (event) => {
+function syncDeviceProtocolFields() {
+  const form = $("#device-form");
+  const protocol = form.elements["protocol"].value;
+  const vendor = form.elements["vendor"].value;
   const port = $("#device-form").elements["port"];
-  if (event.target.value === "telnet" && (!port.value || port.value === "22")) port.value = "23";
-  if (event.target.value === "ssh" && (!port.value || port.value === "23")) port.value = "22";
-});
+  const password = form.elements["password"];
+  if (protocol === "telnet" && (!port.value || port.value === "22" || port.value === "443" || port.value === "830")) port.value = "23";
+  if (protocol === "ssh" && (!port.value || port.value === "23" || port.value === "443" || port.value === "830")) port.value = "22";
+  if (protocol === "api_https" && (!port.value || port.value === "22" || port.value === "23" || port.value === "830")) port.value = "443";
+  if (protocol === "netconf" && (!port.value || port.value === "22" || port.value === "23" || port.value === "443")) port.value = "830";
+  if (protocol === "api_https" && vendor === "palo_alto") {
+    password.placeholder = "PAN-OS API key, or password for API keygen; not saved";
+  } else if (protocol === "api_https" && (vendor === "fortinet" || vendor === "fortigate")) {
+    password.placeholder = "Fortinet API token; not saved";
+  } else if (protocol === "netconf") {
+    password.placeholder = "NETCONF password; not saved";
+  } else {
+    password.placeholder = "Password, used only for this test/fetch";
+  }
+}
+
+$("#device-form").elements["protocol"].addEventListener("change", syncDeviceProtocolFields);
+$("#device-form").elements["vendor"].addEventListener("change", syncDeviceProtocolFields);
+syncDeviceProtocolFields();
 
 $("#device-form").addEventListener("submit", async (event) => {
   event.preventDefault();

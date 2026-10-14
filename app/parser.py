@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import shlex
+import xml.etree.ElementTree as ET
 from hashlib import sha1
 
 from app.models import FirewallObject, NatRule, ParseResult, PolicyRule, Vendor
@@ -227,6 +228,8 @@ def _parse_asa_acl_endpoints(tokens: list[str], protocol: str) -> tuple[list[str
 
 
 def parse_palo_alto(device_name: str, config_text: str) -> ParseResult:
+    if _looks_like_pan_xml_config(config_text):
+        return parse_palo_alto_xml(device_name, config_text)
     if _looks_like_pan_brace_config(config_text):
         return parse_palo_alto_brace(device_name, config_text)
 
@@ -290,6 +293,153 @@ def parse_palo_alto(device_name: str, config_text: str) -> ParseResult:
             continue
 
     return ParseResult(vendor=Vendor.palo_alto, device_name=device_name, policies=list(policies_by_name.values()), objects=_dedupe_objects(objects), nat_rules=list(nat_by_name.values()), warnings=warnings)
+
+
+def _looks_like_pan_xml_config(config_text: str) -> bool:
+    sample = config_text.lstrip()[:2000]
+    return sample.startswith("<config") or sample.startswith("<response") or "<rulebase>" in sample or "<devices>" in sample
+
+
+def parse_palo_alto_xml(device_name: str, config_text: str) -> ParseResult:
+    policies: list[PolicyRule] = []
+    nat_rules: list[NatRule] = []
+    objects: list[FirewallObject] = []
+    warnings: list[str] = []
+    try:
+        root = ET.fromstring(config_text.strip())
+    except ET.ParseError as exc:
+        return ParseResult(vendor=Vendor.palo_alto, device_name=device_name, policies=[], objects=[], nat_rules=[], warnings=[f"Could not parse Palo Alto XML config: {exc}"])
+
+    config_root = root.find(".//config") if root.tag == "response" else root
+    if config_root is None:
+        config_root = root
+
+    for entry in config_root.findall(".//address/entry"):
+        name = entry.attrib.get("name", "unknown")
+        value = _pan_xml_first_text(entry, ["ip-netmask", "ip-range", "fqdn"]) or ET.tostring(entry, encoding="unicode")
+        objects.append(FirewallObject(name=name, type="address", value=value, vendor=Vendor.palo_alto))
+
+    for entry in config_root.findall(".//address-group/entry"):
+        name = entry.attrib.get("name", "unknown")
+        value = " ".join(_pan_xml_members(entry.find("static"))) or ET.tostring(entry, encoding="unicode")
+        objects.append(FirewallObject(name=name, type="address-group", value=value, vendor=Vendor.palo_alto))
+
+    for entry in config_root.findall(".//service/entry"):
+        name = entry.attrib.get("name", "unknown")
+        value = _pan_xml_service_value(entry)
+        objects.append(FirewallObject(name=name, type="service", value=value, vendor=Vendor.palo_alto))
+
+    for entry in config_root.findall(".//service-group/entry"):
+        name = entry.attrib.get("name", "unknown")
+        value = " ".join(_pan_xml_members(entry.find("members"))) or ET.tostring(entry, encoding="unicode")
+        objects.append(FirewallObject(name=name, type="service-group", value=value, vendor=Vendor.palo_alto))
+
+    for line_no, entry in enumerate(config_root.findall(".//rulebase/security/rules/entry"), start=1):
+        name = entry.attrib.get("name", f"security-rule-{line_no}")
+        policies.append(
+            PolicyRule(
+                id=_rule_id(Vendor.palo_alto, device_name, name, line_no),
+                vendor=Vendor.palo_alto,
+                device_name=device_name,
+                rule_name=name,
+                source_zones=_pan_xml_members(entry.find("from")),
+                destination_zones=_pan_xml_members(entry.find("to")),
+                source_addresses=_pan_xml_members(entry.find("source")),
+                destination_addresses=_pan_xml_members(entry.find("destination")),
+                services=_pan_xml_members(entry.find("service")),
+                applications=_pan_xml_members(entry.find("application")),
+                users=_pan_xml_members(entry.find("source-user")),
+                action=entry.findtext("action") or "unknown",
+                enabled=(entry.findtext("disabled") or "no").lower() not in {"yes", "true"},
+                raw=ET.tostring(entry, encoding="unicode"),
+                line_no=line_no,
+                tags=_pan_xml_members(entry.find("tag")),
+            )
+        )
+
+    for line_no, entry in enumerate(config_root.findall(".//rulebase/nat/rules/entry"), start=1):
+        name = entry.attrib.get("name", f"nat-rule-{line_no}")
+        nat_type, translated_sources, translated_destinations, translated_services = _pan_xml_nat_translation(entry)
+        nat_rules.append(
+            NatRule(
+                id=_rule_id(Vendor.palo_alto, device_name, f"nat:{name}", line_no),
+                vendor=Vendor.palo_alto,
+                device_name=device_name,
+                rule_name=name,
+                nat_type=nat_type,
+                source_zones=_pan_xml_members(entry.find("from")),
+                destination_zones=_pan_xml_members(entry.find("to")),
+                original_sources=_pan_xml_members(entry.find("source")) or ["any"],
+                original_destinations=_pan_xml_members(entry.find("destination")) or ["any"],
+                original_services=[entry.findtext("service") or "any"],
+                translated_sources=translated_sources,
+                translated_destinations=translated_destinations,
+                translated_services=translated_services,
+                enabled=(entry.findtext("disabled") or "no").lower() not in {"yes", "true"},
+                raw=ET.tostring(entry, encoding="unicode"),
+                line_no=line_no,
+            )
+        )
+
+    if not policies and not nat_rules and not objects:
+        warnings.append("Palo Alto XML was fetched, but no supported address, service, security rule, or NAT rule nodes were found.")
+
+    return ParseResult(vendor=Vendor.palo_alto, device_name=device_name, policies=policies, objects=_dedupe_objects(objects), nat_rules=nat_rules, warnings=warnings)
+
+
+def _pan_xml_members(node: ET.Element | None) -> list[str]:
+    if node is None:
+        return []
+    members = [item.text.strip() for item in node.findall("member") if item.text and item.text.strip()]
+    if members:
+        return _dedupe(members)
+    if node.text and node.text.strip():
+        return [node.text.strip()]
+    return []
+
+
+def _pan_xml_first_text(node: ET.Element, names: list[str]) -> str:
+    for name in names:
+        value = node.findtext(name)
+        if value and value.strip():
+            return value.strip()
+    return ""
+
+
+def _pan_xml_service_value(entry: ET.Element) -> str:
+    protocol = entry.find("protocol")
+    if protocol is None:
+        return ET.tostring(entry, encoding="unicode")
+    tcp_port = protocol.findtext("tcp/port")
+    udp_port = protocol.findtext("udp/port")
+    if tcp_port:
+        return f"tcp/{tcp_port}"
+    if udp_port:
+        return f"udp/{udp_port}"
+    return ET.tostring(entry, encoding="unicode")
+
+
+def _pan_xml_nat_translation(entry: ET.Element) -> tuple[str, list[str], list[str], list[str]]:
+    source_translation = entry.find("source-translation")
+    destination_translation = entry.find("destination-translation")
+    translated_sources: list[str] = []
+    translated_destinations: list[str] = []
+    translated_services: list[str] = []
+    nat_type = "nat"
+    if source_translation is not None:
+        nat_type = "source"
+        translated_sources.extend(_pan_xml_members(source_translation.find(".//translated-address")))
+        translated_sources.extend(_pan_xml_members(source_translation.find(".//interface-address/ip")))
+        translated_sources.extend(_pan_xml_members(source_translation.find(".//fallback-translated-address")))
+    if destination_translation is not None:
+        nat_type = "destination" if nat_type == "nat" else "source-destination"
+        translated_address = destination_translation.findtext("translated-address")
+        translated_port = destination_translation.findtext("translated-port")
+        if translated_address:
+            translated_destinations.append(translated_address)
+        if translated_port:
+            translated_services.append(translated_port)
+    return nat_type, _dedupe(translated_sources), _dedupe(translated_destinations), _dedupe(translated_services)
 
 
 def _looks_like_pan_brace_config(config_text: str) -> bool:
