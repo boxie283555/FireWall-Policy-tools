@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Firewall Policy Tools</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-mark">ASA</span>
+          <div>
+            <strong>Policy Manager</strong>
+            <small>Cisco ASA / Palo Alto / Fortinet / Huawei</small>
+          </div>
+        </div>
+        <nav class="tree-nav">
+          <div class="tree-group">
+            <div class="tree-title">Devices</div>
+            <div id="device-tree" class="device-tree"></div>
+          </div>
+          <div class="tree-group">
+            <div class="tree-title">Monitoring</div>
+            <button class="nav active" data-view="dashboard">Dashboard</button>
+            <button class="nav" data-view="audit">Audit Log</button>
+          </div>
+          <div class="tree-group">
+            <div class="tree-title">Configuration</div>
+            <button class="nav" data-view="import">Import Config</button>
+            <button class="nav" data-view="policies">Access Rules</button>
+            <button class="nav" data-view="objects">Objects</button>
+            <button class="nav" data-view="changes">Change Requests</button>
+          </div>
+          <div class="tree-group">
+            <div class="tree-title">Policy Analysis</div>
+            <button class="nav" data-view="visualization">Path / Topology</button>
+            <button class="nav" data-view="analysis">Risk Findings</button>
+          </div>
+        </nav>
+      </aside>
+
+      <main>
+        <header class="topbar">
+          <div>
+            <h1 id="page-title">Dashboard</h1>
+            <p id="page-subtitle">Device policy inventory and risk status.</p>
+          </div>
+          <div class="top-actions">
+            <select id="global-vendor">
+              <option value="">All Vendors</option>
+              <option value="cisco_asa">Cisco ASA</option>
+              <option value="palo_alto">Palo Alto</option>
+              <option value="fortinet">Fortinet</option>
+              <option value="huawei">Huawei</option>
+            </select>
+            <select id="global-device">
+              <option value="">All Devices</option>
+            </select>
+            <button class="primary" id="refresh-btn">Refresh</button>
+          </div>
+        </header>
+
+        <datalist id="zone-options"></datalist>
+        <datalist id="address-options"></datalist>
+        <datalist id="service-options"></datalist>
+        <datalist id="application-options"></datalist>
+        <datalist id="user-options"></datalist>
+        <datalist id="policy-options"></datalist>
+
+      <section id="dashboard" class="view active">
+        <div class="metrics">
+          <div class="metric"><span>策略总数</span><strong id="metric-policies">0</strong></div>
+          <div class="metric"><span>对象总数</span><strong id="metric-objects">0</strong></div>
+          <div class="metric"><span>风险发现</span><strong id="metric-findings">0</strong></div>
+          <div class="metric"><span>高风险</span><strong id="metric-high">0</strong></div>
+        </div>
+        <div class="panel-grid">
+          <section class="panel">
+            <h2>厂商分布</h2>
+            <div id="vendor-bars" class="bars"></div>
+          </section>
+          <section class="panel">
+            <h2>动作分布</h2>
+            <div id="action-bars" class="bars"></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="import" class="view">
+        <div class="panel">
+          <h2>导入设备配置</h2>
+          <form id="import-form" class="form-grid">
+            <label>厂商
+              <select name="vendor">
+                <option value="cisco_asa">Cisco ASA</option>
+                <option value="palo_alto">Palo Alto</option>
+                <option value="fortinet">Fortinet</option>
+                <option value="huawei">Huawei</option>
+              </select>
+            </label>
+            <label>设备名称
+              <input name="device_name" value="fw-imported" />
+            </label>
+            <label class="wide">配置文件
+              <input name="file" type="file" />
+            </label>
+            <label class="wide">或粘贴配置
+              <textarea name="config_text" rows="12" placeholder="粘贴 running-config、Palo Alto set 命令、Fortinet config firewall policy 或 Huawei security-policy"></textarea>
+            </label>
+            <button class="primary" type="submit">导入并分析</button>
+          </form>
+          <pre id="import-result" class="result"></pre>
+        </div>
+      </section>
+
+      <section id="policies" class="view">
+        <div class="workbench">
+          <div class="filter-strip">
+            <input id="policy-source-zone" list="zone-options" placeholder="源区域/ACL" />
+            <input id="policy-destination-zone" list="zone-options" placeholder="目的区域" />
+            <input id="policy-source" list="address-options" placeholder="源地址/对象" />
+            <input id="policy-destination" list="address-options" placeholder="目的地址/对象" />
+            <input id="policy-service" list="service-options" placeholder="端口/服务" />
+            <input id="policy-application" list="application-options" placeholder="应用" />
+            <input id="policy-user" list="user-options" placeholder="用户" />
+            <select id="policy-action">
+              <option value="">动作</option>
+              <option value="allow">allow</option>
+              <option value="permit">permit</option>
+              <option value="accept">accept</option>
+              <option value="deny">deny</option>
+              <option value="drop">drop</option>
+            </select>
+            <input id="policy-query" placeholder="关键字" />
+            <button class="secondary" id="clear-policy-filters" type="button">清除过滤</button>
+          </div>
+          <div class="table-status"><span id="policy-count">0</span> rules matched</div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th><th>厂商</th><th>设备</th><th>规则</th><th>区域</th><th>源</th><th>目的</th><th>服务</th><th>应用/用户</th><th>动作</th><th>状态</th>
+              </tr>
+            </thead>
+            <tbody id="policy-table"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="visualization" class="view">
+        <div class="tabs">
+          <button class="tab active" data-tab="path">Path</button>
+          <button class="tab" data-tab="matrix">Matrix</button>
+          <button class="tab" data-tab="topology">Topology</button>
+          <button class="tab" data-tab="dependencies">Dependencies</button>
+          <button class="tab" data-tab="order">Rule Order</button>
+        </div>
+        <div id="tab-path" class="tab-panel active">
+          <div class="panel">
+            <h2>策略命中路径分析</h2>
+            <form id="path-form" class="filter-strip">
+              <input name="source_zone" list="zone-options" placeholder="源区域/ACL" />
+              <input name="destination_zone" list="zone-options" placeholder="目的区域" />
+              <input name="source" list="address-options" placeholder="源地址/对象" />
+              <input name="destination" list="address-options" placeholder="目的地址/对象" />
+              <input name="service" list="service-options" placeholder="服务/端口" />
+              <input name="application" list="application-options" placeholder="应用" />
+              <input name="user" list="user-options" placeholder="用户" />
+              <button class="primary" type="submit">Analyze</button>
+            </form>
+          </div>
+          <div id="path-result" class="cards"></div>
+        </div>
+        <div id="tab-matrix" class="tab-panel">
+          <div class="table-wrap compact"><table><thead id="matrix-head"></thead><tbody id="matrix-body"></tbody></table></div>
+        </div>
+        <div id="tab-topology" class="tab-panel">
+          <div id="topology-canvas" class="topology"></div>
+        </div>
+        <div id="tab-dependencies" class="tab-panel">
+          <section class="panel">
+            <h2>查询对象引用</h2>
+            <form id="dependency-search-form" class="filter-strip">
+              <input id="dependency-object-query" name="name" list="address-options" placeholder="对象名 / 地址对象 / 服务对象" required />
+              <button class="primary" type="submit">查询引用</button>
+            </form>
+          </section>
+          <div id="dependency-search-result" class="cards"></div>
+          <section class="panel">
+            <h2>查询策略引用的对象</h2>
+            <form id="policy-dependency-search-form" class="filter-strip">
+              <input id="dependency-policy-query" name="policy" list="policy-options" placeholder="策略名 / 策略关键字 / Rule ID" required />
+              <button class="primary" type="submit">查询对象</button>
+            </form>
+          </section>
+          <div id="policy-dependency-search-result" class="cards"></div>
+          <section class="panel">
+            <h2>对象引用关系图 Top</h2>
+            <div id="dependency-graph" class="dependency-graph"></div>
+          </section>
+          <div class="panel-grid">
+            <section class="panel"><h2>对象引用 Top 300</h2><div id="dependency-referenced" class="cards"></div></section>
+            <section class="panel"><h2>未引用对象 Top 300</h2><div id="dependency-unreferenced" class="cards"></div></section>
+          </div>
+        </div>
+        <div id="tab-order" class="tab-panel">
+          <div class="table-wrap"><table><thead><tr><th>#</th><th>设备</th><th>规则</th><th>区域</th><th>动作</th><th>疑似被覆盖</th></tr></thead><tbody id="order-table"></tbody></table></div>
+        </div>
+      </section>
+
+      <section id="objects" class="view">
+        <div class="toolbar">
+          <select id="object-vendor">
+            <option value="">全部厂商</option>
+            <option value="cisco_asa">Cisco ASA</option>
+            <option value="palo_alto">Palo Alto</option>
+            <option value="fortinet">Fortinet</option>
+            <option value="huawei">Huawei</option>
+          </select>
+          <input id="object-query" placeholder="搜索对象名、类型和值" />
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>厂商</th><th>对象名</th><th>类型</th><th>值</th></tr></thead>
+            <tbody id="object-table"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="analysis" class="view">
+        <div id="finding-list" class="finding-list"></div>
+      </section>
+
+      <section id="changes" class="view">
+        <div class="panel">
+          <h2>新增策略申请</h2>
+          <form id="change-form" class="form-grid">
+            <input name="title" placeholder="标题" required />
+            <input name="requester" placeholder="申请人" required />
+            <select name="vendor" id="change-vendor">
+              <option value="">跟随顶部厂商</option>
+              <option value="cisco_asa">Cisco ASA</option>
+              <option value="palo_alto">Palo Alto</option>
+              <option value="fortinet">Fortinet</option>
+              <option value="huawei">Huawei</option>
+            </select>
+            <select name="device_name" id="change-device"><option value="">跟随顶部设备</option></select>
+            <input name="source_zone" list="zone-options" placeholder="源区域/ASA ACL或接口" />
+            <input name="destination_zone" list="zone-options" placeholder="目的区域" />
+            <input name="source" list="address-options" placeholder="源地址/对象" required />
+            <input name="destination" list="address-options" placeholder="目的地址/对象" required />
+            <input name="service" list="service-options" placeholder="服务/端口" required />
+            <input name="application" list="application-options" placeholder="应用" />
+            <input name="user" list="user-options" placeholder="用户" />
+            <select name="action"><option value="allow">Allow</option><option value="deny">Deny</option></select>
+            <input name="expires_at" type="date" />
+            <textarea class="wide" name="business_reason" placeholder="业务原因" required></textarea>
+            <div class="wide form-actions">
+              <button class="primary" type="button" id="precheck-btn">预验证</button>
+              <button class="primary" type="submit">提交申请</button>
+            </div>
+          </form>
+        </div>
+        <div id="precheck-result" class="cards"></div>
+        <div id="change-list" class="cards"></div>
+      </section>
+
+      <section id="audit" class="view">
+        <div id="audit-list" class="cards"></div>
+      </section>
+      </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
