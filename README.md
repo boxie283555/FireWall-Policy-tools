@@ -18,7 +18,7 @@
 从 GitHub 拉取代码：
 
 ```bash
-git clone <你的GitHub仓库地址> FireWall-Policy-tools
+git clone https://github.com/boxie283555/FireWall-Policy-tools.git FireWall-Policy-tools
 cd FireWall-Policy-tools
 ```
 
@@ -71,7 +71,7 @@ http://127.0.0.1:8080
 
 ```bash
 ssh 192.168.20.169
-git clone <你的GitHub仓库地址> /opt/firewall-policy-tools
+git clone https://github.com/boxie283555/FireWall-Policy-tools.git /opt/firewall-policy-tools
 cd /opt/firewall-policy-tools
 docker compose up -d --build
 ```
@@ -109,7 +109,7 @@ chmod +x scripts/deploy.sh
 首次推送到 GitHub：
 
 ```bash
-git remote add origin <你的GitHub仓库地址>
+git remote add origin https://github.com/boxie283555/FireWall-Policy-tools.git
 git branch -M main
 git push -u origin main
 ```
