@@ -252,6 +252,17 @@ textarea {
   min-width: 0;
 }
 
+.checkline {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+}
+
+.checkline input {
+  width: auto;
+}
+
 .primary {
   border: 1px solid #0f4770;
   border-radius: 3px;
@@ -654,6 +665,35 @@ tbody tr:hover {
 .graph-count {
   fill: var(--primary-dark);
   font-weight: 700;
+}
+
+.status-badge {
+  display: inline-block;
+  min-width: 64px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 2px 6px;
+  background: #eef2f6;
+  color: var(--muted);
+  text-align: center;
+  font-size: 12px;
+}
+
+.status-badge.ok {
+  border-color: #8bbfa5;
+  background: #edf8f2;
+  color: var(--good);
+}
+
+.status-badge.failed {
+  border-color: #e0a5a0;
+  background: #fff1f0;
+  color: var(--danger);
+}
+
+.row-action {
+  margin: 2px;
+  white-space: nowrap;
 }
 
 .shadow-row {

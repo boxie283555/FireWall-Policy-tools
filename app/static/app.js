@@ -1,5 +1,6 @@
 const titles = {
   dashboard: ["Dashboard", "Device policy inventory and risk status."],
+  devices: ["Device Access", "Add firewall management IPs and fetch running configuration over SSH."],
   import: ["Import Config", "Load ASA, PAN-OS, Fortinet, or Huawei configuration files."],
   policies: ["Access Rules", "Query by source, destination, service, application, user, zone, and action."],
   objects: ["Objects", "Address, service, and object group inventory."],
@@ -242,6 +243,115 @@ async function loadObjects() {
       </tr>`
     )
     .join("");
+}
+
+async function loadDevices() {
+  const devices = await api("/api/device-connections");
+  $("#device-access-table").innerHTML = devices.length
+    ? devices
+        .map(
+          (device) => `<tr>
+            <td><strong>${escapeHtml(device.name)}</strong><div class="muted">${escapeHtml(device.notes || "")}</div></td>
+            <td>${escapeHtml(device.vendor)}</td>
+            <td>${escapeHtml(device.host)}:${escapeHtml(device.port)}</td>
+            <td>${escapeHtml(device.username)}</td>
+            <td><span class="status-badge ${statusClass(device.last_status)}">${escapeHtml(device.last_status || "new")}</span>${device.last_error ? `<div class="muted">${escapeHtml(device.last_error).slice(0, 100)}</div>` : ""}</td>
+            <td>${escapeHtml(device.last_fetched_at || "")}</td>
+            <td>
+              <button class="secondary row-action" data-action="fill-device" data-id="${device.id}">填入</button>
+              <button class="secondary row-action" data-action="test-device" data-id="${device.id}">测试</button>
+              <button class="primary row-action" data-action="fetch-device" data-id="${device.id}">拉取</button>
+            </td>
+          </tr>`
+        )
+        .join("")
+    : '<tr><td colspan="7">暂无设备接入配置。</td></tr>';
+  $$(".row-action").forEach((button) => {
+    button.addEventListener("click", () => handleDeviceRowAction(button.dataset.action, Number(button.dataset.id), devices));
+  });
+}
+
+function statusClass(status) {
+  if (!status) return "";
+  if (status.includes("ok")) return "ok";
+  if (status.includes("failed")) return "failed";
+  return "";
+}
+
+function deviceFormPayload() {
+  const data = Object.fromEntries(new FormData($("#device-form")).entries());
+  return {
+    connection: {
+      name: data.name,
+      vendor: data.vendor,
+      host: data.host,
+      port: Number(data.port || 22),
+      protocol: "ssh",
+      username: data.username,
+      enable_password_required: data.enable_password_required === "on",
+      notes: data.notes || null,
+    },
+    credentials: {
+      password: data.password || "",
+      enable_password: data.enable_password || null,
+    },
+  };
+}
+
+async function saveDeviceConnection() {
+  const payload = deviceFormPayload();
+  const device = await api("/api/device-connections", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload.connection),
+  });
+  $("#device-result").textContent = JSON.stringify({ saved: device, note: "密码未保存，如需测试或拉取请在表单中输入密码。" }, null, 2);
+  await loadDevices();
+  return { device, credentials: payload.credentials };
+}
+
+async function testDeviceConnection(deviceId, credentials) {
+  if (!credentials.password) throw new Error("请输入设备密码。");
+  const result = await api(`/api/device-connections/${deviceId}/test`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(credentials),
+  });
+  $("#device-result").textContent = JSON.stringify(result, null, 2);
+  await loadDevices();
+}
+
+async function fetchDeviceConfig(deviceId, credentials) {
+  if (!credentials.password) throw new Error("请输入设备密码。");
+  const result = await api(`/api/device-connections/${deviceId}/fetch`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(credentials),
+  });
+  $("#device-result").textContent = JSON.stringify(result, null, 2);
+  await loadInventory();
+  await loadDashboard();
+  await loadDevices();
+}
+
+async function handleDeviceRowAction(action, deviceId, devices) {
+  const device = devices.find((item) => item.id === deviceId);
+  if (!device) return;
+  if (action === "fill-device") {
+    const form = $("#device-form");
+    form.elements["name"].value = device.name;
+    form.elements["vendor"].value = device.vendor;
+    form.elements["host"].value = device.host;
+    form.elements["port"].value = device.port;
+    form.elements["username"].value = device.username;
+    form.elements["enable_password_required"].checked = Boolean(device.enable_password_required);
+    form.elements["notes"].value = device.notes || "";
+    $("#device-result").textContent = "已填入设备信息。密码不会保存，请重新输入后测试或拉取。";
+    return;
+  }
+  const credentials = deviceFormPayload().credentials;
+  if (action === "test-device") await testDeviceConnection(deviceId, credentials);
+  if (action === "fetch-device") await fetchDeviceConfig(deviceId, credentials);
 }
 
 async function loadAnalysis() {
@@ -728,6 +838,7 @@ function loadView(view = document.querySelector(".view.active").id) {
     analysis: loadAnalysis,
     changes: loadChanges,
     audit: loadAudit,
+    devices: loadDevices,
     import: async () => {},
   };
   return loaders[view]().catch((error) => alert(error.message));
@@ -761,6 +872,25 @@ $("#path-form").addEventListener("submit", runPathAnalysis);
 $("#dependency-search-form").addEventListener("submit", (event) => runDependencyObjectSearch(event).catch((error) => alert(error.message)));
 $("#policy-dependency-search-form").addEventListener("submit", (event) => runPolicyDependencySearch(event).catch((error) => alert(error.message)));
 $("#precheck-btn").addEventListener("click", () => runPolicyPrecheck().catch((error) => alert(error.message)));
+
+$("#device-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  await saveDeviceConnection().catch((error) => alert(error.message));
+});
+$("#device-save-test").addEventListener("click", async () => {
+  const saved = await saveDeviceConnection().catch((error) => {
+    alert(error.message);
+    return null;
+  });
+  if (saved) await testDeviceConnection(saved.device.id, saved.credentials).catch((error) => alert(error.message));
+});
+$("#device-save-fetch").addEventListener("click", async () => {
+  const saved = await saveDeviceConnection().catch((error) => {
+    alert(error.message);
+    return null;
+  });
+  if (saved) await fetchDeviceConfig(saved.device.id, saved.credentials).catch((error) => alert(error.message));
+});
 
 $("#import-form").addEventListener("submit", async (event) => {
   event.preventDefault();

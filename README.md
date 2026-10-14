@@ -11,6 +11,7 @@
 - 策略可视化：路径分析、矩阵视图、拓扑视图、依赖关系图、规则顺序视图
 - 策略分析：冲突、重复、遮挡/永不命中、过宽策略、高危端口/应用、跨区域风险
 - 变更预检查：新增策略前检查冲突、重叠、互斥和推荐插入位置
+- 设备接入：通过 GUI 添加设备管理 IP，使用 SSH 测试连接并拉取 running-config 自动导入
 - 本地持久化：SQLite 数据库存储导入结果和变更记录
 
 ## Docker 安装
@@ -175,11 +176,31 @@ chmod +x scripts/deploy.sh
 1. 打开 `http://192.168.20.169:8080`
 2. 进入 `Import Config`
 3. 选择厂商和设备名，上传或粘贴配置
-4. 进入 `Access Rules` 查询策略
-5. 进入 `Objects` 查询对象
-6. 进入 `Path / Topology` 查看路径、矩阵、拓扑、依赖关系和规则顺序
-7. 进入 `Risk Findings` 查看风险分析结果
-8. 进入 `Change Requests` 做新增策略预检查
+4. 也可以进入 `Device Access`，录入设备 IP、端口、用户名和临时密码，通过 SSH 拉取配置并自动导入
+5. 进入 `Access Rules` 查询策略
+6. 进入 `Objects` 查询对象
+7. 进入 `Path / Topology` 查看路径、矩阵、拓扑、依赖关系和规则顺序
+8. 进入 `Risk Findings` 查看风险分析结果
+9. 进入 `Change Requests` 做新增策略预检查
+
+## 设备接入说明
+
+`Device Access` 页面用于从防火墙直接拉取配置：
+
+- 支持厂商：Cisco ASA、Palo Alto、Fortinet、Huawei
+- 当前协议：SSH
+- 保存内容：设备名、厂商、管理 IP、端口、用户名、备注
+- 不保存内容：密码、Enable 密码、Token
+- 拉取成功后会使用现有解析器自动导入策略和对象
+
+各厂商默认执行命令：
+
+- Cisco ASA：`terminal pager 0`、`show running-config`
+- Palo Alto：`set cli pager off`、`set cli config-output-format set`、`configure`、`show`
+- Fortinet：`config system console`、`set output standard`、`end`、`show full-configuration`
+- Huawei：`screen-length 0 temporary`、`display current-configuration`
+
+如果 Cisco ASA 需要进入 enable 模式，请勾选 `Cisco ASA 需要 enable`，并在拉取时填写 Enable 密码。
 
 ## GitHub 推送
 

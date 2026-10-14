@@ -59,6 +59,39 @@ class ImportRequest(BaseModel):
     config_text: str
 
 
+class DeviceConnection(BaseModel):
+    id: int | None = None
+    name: str
+    vendor: Vendor
+    host: str
+    port: int = 22
+    protocol: str = "ssh"
+    username: str
+    enable_password_required: bool = False
+    notes: str | None = None
+    last_status: str | None = None
+    last_error: str | None = None
+    last_fetched_at: str | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class DeviceConnectionRequest(BaseModel):
+    name: str
+    vendor: Vendor
+    host: str
+    port: int = 22
+    protocol: str = "ssh"
+    username: str
+    enable_password_required: bool = False
+    notes: str | None = None
+
+
+class DeviceCredentialRequest(BaseModel):
+    password: str
+    enable_password: str | None = None
+
+
 class AnalysisFinding(BaseModel):
     severity: str
     category: str

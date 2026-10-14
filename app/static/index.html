@@ -28,6 +28,7 @@
           </div>
           <div class="tree-group">
             <div class="tree-title">Configuration</div>
+            <button class="nav" data-view="devices">Device Access</button>
             <button class="nav" data-view="import">Import Config</button>
             <button class="nav" data-view="policies">Access Rules</button>
             <button class="nav" data-view="objects">Objects</button>
@@ -112,6 +113,46 @@
             <button class="primary" type="submit">导入并分析</button>
           </form>
           <pre id="import-result" class="result"></pre>
+        </div>
+      </section>
+
+      <section id="devices" class="view">
+        <div class="panel">
+          <h2>设备接入</h2>
+          <form id="device-form" class="form-grid">
+            <input name="name" placeholder="设备名称，例如 cfdcnfw0401" required />
+            <select name="vendor" required>
+              <option value="cisco_asa">Cisco ASA</option>
+              <option value="palo_alto">Palo Alto</option>
+              <option value="fortinet">Fortinet</option>
+              <option value="huawei">Huawei</option>
+            </select>
+            <input name="host" placeholder="管理 IP，例如 192.168.20.1" required />
+            <input name="port" type="number" min="1" max="65535" value="22" placeholder="SSH 端口" required />
+            <input name="username" placeholder="用户名" required />
+            <input name="password" type="password" autocomplete="new-password" placeholder="密码，仅本次测试/拉取使用" />
+            <input name="enable_password" type="password" autocomplete="new-password" placeholder="Enable 密码，Cisco ASA 可选" />
+            <label class="checkline">
+              <input name="enable_password_required" type="checkbox" />
+              <span>Cisco ASA 需要 enable</span>
+            </label>
+            <textarea class="wide" name="notes" placeholder="备注"></textarea>
+            <div class="wide form-actions">
+              <button class="primary" type="submit">保存设备</button>
+              <button class="secondary" id="device-save-test" type="button">保存并测试</button>
+              <button class="primary" id="device-save-fetch" type="button">保存并拉取配置</button>
+            </div>
+          </form>
+          <pre id="device-result" class="result"></pre>
+        </div>
+        <div class="panel">
+          <h2>已配置设备</h2>
+          <div class="table-wrap compact">
+            <table>
+              <thead><tr><th>设备</th><th>厂商</th><th>管理地址</th><th>用户</th><th>状态</th><th>最近拉取</th><th>操作</th></tr></thead>
+              <tbody id="device-access-table"></tbody>
+            </table>
+          </div>
         </div>
       </section>
 

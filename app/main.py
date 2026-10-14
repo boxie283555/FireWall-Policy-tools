@@ -6,19 +6,24 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.analyzer import analyze_policies
-from app.models import ChangeRequest, ImportRequest, PolicyPrecheckRequest, Vendor
+from app.device_access import fetch_running_config, test_ssh_connection
+from app.models import ChangeRequest, DeviceConnectionRequest, DeviceCredentialRequest, ImportRequest, PolicyPrecheckRequest, Vendor
 from app.parser import parse_config
 from app.precheck import precheck_policy_request
 from app.storage import (
     create_change_request,
     dashboard,
+    get_device_connection,
     init_db,
     inventory,
     list_audit_log,
     list_change_requests,
+    list_device_connections,
     list_objects,
     list_policies,
     save_parse_result,
+    update_device_connection_status,
+    upsert_device_connection,
 )
 from app.visualization import object_dependencies, object_dependency_detail, path_analysis, policy_dependency_detail, rule_order, topology, zone_matrix
 
@@ -72,6 +77,60 @@ async def api_import_file(vendor: Vendor = Form(...), device_name: str = Form("i
     result = parse_config(vendor, device_name, config_text)
     saved = save_parse_result(result)
     return {"saved": saved, "warnings": result.warnings}
+
+
+@app.get("/api/device-connections")
+def api_device_connections():
+    return list_device_connections()
+
+
+@app.post("/api/device-connections")
+def api_upsert_device_connection(request: DeviceConnectionRequest):
+    if request.vendor not in Vendor:
+        raise HTTPException(status_code=400, detail="Unsupported vendor")
+    if request.protocol != "ssh":
+        raise HTTPException(status_code=400, detail="当前版本仅支持 SSH。")
+    return upsert_device_connection(request)
+
+
+@app.post("/api/device-connections/{device_id}/test")
+def api_test_device_connection(device_id: int, credentials: DeviceCredentialRequest):
+    try:
+        device = get_device_connection(device_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Device connection not found") from None
+    try:
+        result = test_ssh_connection(device, credentials.password)
+        update_device_connection_status(device_id, "test_ok", result["detail"])
+        return result
+    except Exception as exc:
+        update_device_connection_status(device_id, "test_failed", str(exc))
+        raise HTTPException(status_code=400, detail=f"连接失败：{exc}") from exc
+
+
+@app.post("/api/device-connections/{device_id}/fetch")
+def api_fetch_device_config(device_id: int, credentials: DeviceCredentialRequest):
+    try:
+        device = get_device_connection(device_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Device connection not found") from None
+    try:
+        fetched = fetch_running_config(device, credentials.password, credentials.enable_password)
+        result = parse_config(device.vendor, device.name, fetched.config_text)
+        saved = save_parse_result(result)
+        update_device_connection_status(device_id, "fetch_ok", None, fetched=True)
+        return {
+            "status": "ok",
+            "device_name": device.name,
+            "vendor": device.vendor,
+            "saved": saved,
+            "warnings": result.warnings,
+            "commands": fetched.command_log,
+            "config_size": len(fetched.config_text),
+        }
+    except Exception as exc:
+        update_device_connection_status(device_id, "fetch_failed", str(exc))
+        raise HTTPException(status_code=400, detail=f"拉取失败：{exc}") from exc
 
 
 @app.get("/api/policies")

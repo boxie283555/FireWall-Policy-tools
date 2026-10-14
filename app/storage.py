@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from app.analyzer import analyze_policies
-from app.models import ChangeRequest, Dashboard, FirewallObject, ParseResult, PolicyRule
+from app.models import ChangeRequest, Dashboard, DeviceConnection, DeviceConnectionRequest, FirewallObject, ParseResult, PolicyRule
 
 DATA_DIR = Path("data")
 DB_PATH = DATA_DIR / "firewall_policy_tools.db"
@@ -73,6 +73,22 @@ def init_db() -> None:
               detail text not null,
               created_at text default current_timestamp
             );
+            create table if not exists device_connections (
+              id integer primary key autoincrement,
+              name text not null unique,
+              vendor text not null,
+              host text not null,
+              port integer not null default 22,
+              protocol text not null default 'ssh',
+              username text not null,
+              enable_password_required integer not null default 0,
+              notes text,
+              last_status text,
+              last_error text,
+              last_fetched_at text,
+              created_at text default current_timestamp,
+              updated_at text default current_timestamp
+            );
             """
         )
         _ensure_column(conn, "change_requests", "source_zone", "text")
@@ -81,6 +97,12 @@ def init_db() -> None:
         _ensure_column(conn, "change_requests", "user", "text")
         _ensure_column(conn, "change_requests", "vendor", "text")
         _ensure_column(conn, "change_requests", "device_name", "text")
+        _ensure_column(conn, "device_connections", "enable_password_required", "integer not null default 0")
+        _ensure_column(conn, "device_connections", "notes", "text")
+        _ensure_column(conn, "device_connections", "last_status", "text")
+        _ensure_column(conn, "device_connections", "last_error", "text")
+        _ensure_column(conn, "device_connections", "last_fetched_at", "text")
+        _ensure_column(conn, "device_connections", "updated_at", "text")
 
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
@@ -197,6 +219,88 @@ def create_change_request(request: ChangeRequest) -> dict[str, Any]:
         request_id = cur.lastrowid
         conn.execute("insert into audit_log(event, detail) values (?, ?)", ("create_change_request", f"#{request_id} {request.title}"))
     return {"id": request_id, **request.model_dump()}
+
+
+def upsert_device_connection(request: DeviceConnectionRequest) -> DeviceConnection:
+    with get_conn() as conn:
+        existing = conn.execute("select id from device_connections where name = ?", (request.name,)).fetchone()
+        if existing:
+            conn.execute(
+                """
+                update device_connections
+                set vendor = ?, host = ?, port = ?, protocol = ?, username = ?,
+                    enable_password_required = ?, notes = ?, updated_at = current_timestamp
+                where id = ?
+                """,
+                (
+                    request.vendor.value,
+                    request.host,
+                    request.port,
+                    request.protocol,
+                    request.username,
+                    1 if request.enable_password_required else 0,
+                    request.notes,
+                    existing["id"],
+                ),
+            )
+            device_id = existing["id"]
+            event = "update_device_connection"
+        else:
+            cur = conn.execute(
+                """
+                insert into device_connections(name, vendor, host, port, protocol, username, enable_password_required, notes)
+                values (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    request.name,
+                    request.vendor.value,
+                    request.host,
+                    request.port,
+                    request.protocol,
+                    request.username,
+                    1 if request.enable_password_required else 0,
+                    request.notes,
+                ),
+            )
+            device_id = cur.lastrowid
+            event = "create_device_connection"
+        conn.execute("insert into audit_log(event, detail) values (?, ?)", (event, f"{request.name} {request.vendor.value} {request.host}:{request.port}"))
+    return get_device_connection(device_id)
+
+
+def get_device_connection(device_id: int) -> DeviceConnection:
+    with get_conn() as conn:
+        row = conn.execute("select * from device_connections where id = ?", (device_id,)).fetchone()
+    if row is None:
+        raise KeyError(f"device connection {device_id} not found")
+    return _device_connection_from_row(row)
+
+
+def list_device_connections() -> list[DeviceConnection]:
+    with get_conn() as conn:
+        rows = conn.execute("select * from device_connections order by vendor, name").fetchall()
+    return [_device_connection_from_row(row) for row in rows]
+
+
+def update_device_connection_status(device_id: int, status: str, error: str | None = None, fetched: bool = False) -> None:
+    fetched_sql = ", last_fetched_at = current_timestamp" if fetched else ""
+    with get_conn() as conn:
+        conn.execute(
+            f"""
+            update device_connections
+            set last_status = ?, last_error = ?, updated_at = current_timestamp{fetched_sql}
+            where id = ?
+            """,
+            (status, error, device_id),
+        )
+        detail = f"#{device_id} {status}" + (f": {error}" if error else "")
+        conn.execute("insert into audit_log(event, detail) values (?, ?)", ("device_connection_status", detail))
+
+
+def _device_connection_from_row(row: sqlite3.Row) -> DeviceConnection:
+    data = dict(row)
+    data["enable_password_required"] = bool(data["enable_password_required"])
+    return DeviceConnection(**data)
 
 
 def list_change_requests() -> list[dict[str, Any]]:
