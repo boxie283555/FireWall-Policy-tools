@@ -7,9 +7,10 @@ A web-based firewall policy management tool. It currently supports importing and
 - Multi-vendor configuration import: Cisco ASA, Palo Alto, Fortinet, Huawei
 - Multi-device tree navigation grouped by vendor and device
 - Policy search by source, destination, port/service, application, user, zone/ACL, action, and keyword
+- NAT rule inventory and search, including original and translated addresses/services
 - Object inventory for address objects, service objects, and object groups
 - Policy visualization: path analysis, matrix view, topology view, dependency graph, and rule order view
-- Policy analysis: conflicts, duplicates, shadowed or never-hit rules, overly broad rules, risky ports/applications, and cross-zone risk
+- Policy and NAT analysis: conflicts, duplicates, shadowed or never-hit rules, overly broad rules, risky ports/applications, cross-zone risk, broad NAT, duplicate NAT, and inbound NAT exposure
 - Change precheck: detects conflicts, overlap, mutual exclusion, and recommends placement before adding a policy
 - Device access: add a management IP in the GUI, test SSH/Telnet connectivity, fetch running configuration, and import it automatically
 - Local persistence: imported results and request records are stored in SQLite
@@ -175,11 +176,12 @@ chmod +x scripts/deploy.sh
 2. Go to `Import Config`.
 3. Select vendor and device name, then upload or paste a configuration.
 4. Or go to `Device Access`, enter device IP, protocol, port, username, and a temporary password, then fetch the configuration directly.
-5. Go to `Access Rules` to search policies.
-6. Go to `Objects` to search objects.
-7. Go to `Path / Topology` to view path analysis, matrix, topology, dependency graph, and rule order.
-8. Go to `Risk Findings` to review analysis results.
-9. Go to `Change Requests` to run precheck before adding a policy.
+5. Go to `Access Rules` to search security policies.
+6. Go to `NAT Rules` to search NAT policies and review NAT analysis findings.
+7. Go to `Objects` to search objects.
+8. Go to `Path / Topology` to view path analysis, matrix, topology, dependency graph, and rule order.
+9. Go to `Risk Findings` to review security policy analysis results.
+10. Go to `Change Requests` to run precheck before adding a policy.
 
 ## Device Access
 

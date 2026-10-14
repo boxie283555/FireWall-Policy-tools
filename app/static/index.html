@@ -31,6 +31,7 @@
             <button class="nav" data-view="devices">Device Access</button>
             <button class="nav" data-view="import">Import Config</button>
             <button class="nav" data-view="policies">Access Rules</button>
+            <button class="nav" data-view="nat">NAT Rules</button>
             <button class="nav" data-view="objects">Objects</button>
             <button class="nav" data-view="changes">Change Requests</button>
           </div>
@@ -73,6 +74,7 @@
       <section id="dashboard" class="view active">
         <div class="metrics">
           <div class="metric"><span>Total Policies</span><strong id="metric-policies">0</strong></div>
+          <div class="metric"><span>NAT Rules</span><strong id="metric-nat">0</strong></div>
           <div class="metric"><span>Total Objects</span><strong id="metric-objects">0</strong></div>
           <div class="metric"><span>Risk Findings</span><strong id="metric-findings">0</strong></div>
           <div class="metric"><span>High Risk</span><strong id="metric-high">0</strong></div>
@@ -192,6 +194,38 @@
             </thead>
             <tbody id="policy-table"></tbody>
           </table>
+        </div>
+      </section>
+
+      <section id="nat" class="view">
+        <div class="workbench">
+          <div class="filter-strip">
+            <select id="nat-type">
+              <option value="">All NAT Types</option>
+              <option value="source">source</option>
+              <option value="destination">destination</option>
+              <option value="static">static</option>
+              <option value="dynamic">dynamic</option>
+              <option value="manual">manual</option>
+            </select>
+            <input id="nat-query" placeholder="Search NAT name, original, translated, zone, or raw config" />
+            <button class="secondary" id="clear-nat-filters" type="button">Clear Filters</button>
+          </div>
+          <div class="table-status"><span id="nat-count">0</span> NAT rules matched</div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th><th>Vendor</th><th>Device</th><th>NAT Rule</th><th>Type</th><th>Zone</th><th>Original</th><th>Translated</th><th>Service</th><th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="nat-table"></tbody>
+          </table>
+        </div>
+        <div class="panel">
+          <h2>NAT Analysis</h2>
+          <div id="nat-analysis-list" class="cards"></div>
         </div>
       </section>
 

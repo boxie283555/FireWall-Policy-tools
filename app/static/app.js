@@ -3,6 +3,7 @@ const titles = {
   devices: ["Device Access", "Add firewall management IPs and fetch running configuration over SSH."],
   import: ["Import Config", "Load ASA, PAN-OS, Fortinet, or Huawei configuration files."],
   policies: ["Access Rules", "Query by source, destination, service, application, user, zone, and action."],
+  nat: ["NAT Rules", "Query NAT policies, translations, and NAT risk findings."],
   objects: ["Objects", "Address, service, and object group inventory."],
   visualization: ["Path / Topology", "Path analysis, zone matrix, topology, dependencies, and rule order."],
   analysis: ["Risk Findings", "Conflicts, duplicates, shadowed rules, broad access, and optimization advice."],
@@ -70,6 +71,7 @@ function setView(view) {
 async function loadDashboard() {
   const data = await api(`/api/dashboard?${paramsFrom({})}`);
   $("#metric-policies").textContent = data.policy_count;
+  $("#metric-nat").textContent = data.nat_rule_count || 0;
   $("#metric-objects").textContent = data.object_count;
   $("#metric-findings").textContent = data.finding_count;
   $("#metric-high").textContent = data.high_risk_count;
@@ -113,20 +115,21 @@ function renderDeviceSelectors() {
     ? Object.entries(grouped)
         .map(([vendor, vendorDevices]) => {
           const policyCount = vendorDevices.reduce((sum, device) => sum + device.policy_count, 0);
+          const natCount = vendorDevices.reduce((sum, device) => sum + (device.nat_rule_count || 0), 0);
           const objectCount = vendorDevices.reduce((sum, device) => sum + device.object_count, 0);
           const vendorActive = globalVendor() === vendor && !globalDevice();
           return `<div class="device-vendor">
             <button class="vendor-node ${vendorActive ? "active" : ""}" data-vendor="${escapeHtml(vendor)}">
               <span class="tree-caret">▾</span>
               <strong>${escapeHtml(vendorLabels[vendor] || vendor)}</strong>
-              <em>${vendorDevices.length} devices / ${policyCount} rules / ${objectCount} objects</em>
+              <em>${vendorDevices.length} devices / ${policyCount} rules / ${natCount} NAT / ${objectCount} objects</em>
             </button>
             <div class="device-children">
               ${vendorDevices
                 .map(
                   (device) => `<button class="device-node ${globalVendor() === device.vendor && globalDevice() === device.device_name ? "active" : ""}" data-vendor="${escapeHtml(device.vendor)}" data-device="${escapeHtml(device.device_name)}">
                     <strong>${escapeHtml(device.device_name)}</strong>
-                    <span>${device.policy_count} rules / ${device.object_count} objects</span>
+                    <span>${device.policy_count} rules / ${device.nat_rule_count || 0} NAT / ${device.object_count} objects</span>
                     <em>${escapeHtml(device.context_label)}</em>
                   </button>`
                 )
@@ -227,6 +230,54 @@ async function loadPolicies() {
       </tr>`
     )
     .join("");
+}
+
+function natFilterParams() {
+  return paramsFrom({
+    query: $("#nat-query").value,
+    nat_type: $("#nat-type").value,
+  });
+}
+
+function clearNatFilters() {
+  $("#nat-query").value = "";
+  $("#nat-type").value = "";
+  loadNatRules();
+}
+
+async function loadNatRules() {
+  const [rules, findings] = await Promise.all([api(`/api/nat-rules?${natFilterParams()}`), api(`/api/nat-analysis?${paramsFrom({})}`)]);
+  $("#nat-count").textContent = rules.length;
+  $("#nat-table").innerHTML = rules
+    .map(
+      (rule, index) => `<tr>
+        <td>${index + 1}</td>
+        <td>${escapeHtml(rule.vendor)}</td>
+        <td>${escapeHtml(rule.device_name)}</td>
+        <td><strong>${escapeHtml(rule.rule_name)}</strong><div class="muted">line ${escapeHtml(rule.line_no || "")}</div></td>
+        <td>${escapeHtml(rule.nat_type)}</td>
+        <td>${textList(rule.source_zones, 2)}<span class="arrow">→</span>${textList(rule.destination_zones, 2)}</td>
+        <td>${textList([...(rule.original_sources || []), ...(rule.original_destinations || [])], 5)}</td>
+        <td>${textList([...(rule.translated_sources || []), ...(rule.translated_destinations || [])], 5)}</td>
+        <td>${textList([...(rule.original_services || []), ...(rule.translated_services || [])], 4)}</td>
+        <td>${rule.enabled ? "enabled" : "disabled"}</td>
+      </tr>`
+    )
+    .join("");
+  $("#nat-analysis-list").innerHTML = findings.length
+    ? findings
+        .map(
+          (finding) => `<article class="card finding">
+            <div class="card-title">
+              <span>${escapeHtml(finding.title)}</span>
+              <span class="severity ${escapeHtml(finding.severity)}">${escapeHtml(finding.severity)}</span>
+            </div>
+            <p>${escapeHtml(finding.detail)}</p>
+            <p><strong>Recommendation:</strong> ${escapeHtml(finding.recommendation)}</p>
+          </article>`
+        )
+        .join("")
+    : '<div class="card">No NAT findings.</div>';
 }
 
 async function loadObjects() {
@@ -835,6 +886,7 @@ function loadView(view = document.querySelector(".view.active").id) {
   const loaders = {
     dashboard: loadDashboard,
     policies: loadPolicies,
+    nat: loadNatRules,
     objects: loadObjects,
     visualization: loadVisualization,
     analysis: loadAnalysis,
@@ -869,6 +921,9 @@ const debouncedLoadPolicies = debounce(loadPolicies);
 });
 $("#policy-action").addEventListener("change", loadPolicies);
 $("#clear-policy-filters").addEventListener("click", clearPolicyFilters);
+$("#nat-query").addEventListener("input", debounce(loadNatRules));
+$("#nat-type").addEventListener("change", loadNatRules);
+$("#clear-nat-filters").addEventListener("click", clearNatFilters);
 $("#object-query").addEventListener("input", loadObjects);
 $("#path-form").addEventListener("submit", runPathAnalysis);
 $("#dependency-search-form").addEventListener("submit", (event) => runDependencyObjectSearch(event).catch((error) => alert(error.message)));

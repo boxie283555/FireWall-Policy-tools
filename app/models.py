@@ -45,11 +45,32 @@ class PolicyRule(BaseModel):
     last_hit_at: str | None = None
 
 
+class NatRule(BaseModel):
+    id: str
+    vendor: Vendor
+    device_name: str = "imported"
+    rule_name: str
+    nat_type: str = "unknown"
+    source_zones: list[str] = Field(default_factory=list)
+    destination_zones: list[str] = Field(default_factory=list)
+    original_sources: list[str] = Field(default_factory=list)
+    original_destinations: list[str] = Field(default_factory=list)
+    original_services: list[str] = Field(default_factory=list)
+    translated_sources: list[str] = Field(default_factory=list)
+    translated_destinations: list[str] = Field(default_factory=list)
+    translated_services: list[str] = Field(default_factory=list)
+    action: str = "nat"
+    enabled: bool = True
+    raw: str = ""
+    line_no: int | None = None
+
+
 class ParseResult(BaseModel):
     vendor: Vendor
     device_name: str
     policies: list[PolicyRule]
     objects: list[FirewallObject]
+    nat_rules: list[NatRule] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -184,6 +205,7 @@ class StoredChangeRequest(ChangeRequest):
 
 class Dashboard(BaseModel):
     policy_count: int
+    nat_rule_count: int = 0
     object_count: int
     change_request_count: int
     finding_count: int

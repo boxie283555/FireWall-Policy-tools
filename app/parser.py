@@ -4,7 +4,7 @@ import re
 import shlex
 from hashlib import sha1
 
-from app.models import FirewallObject, ParseResult, PolicyRule, Vendor
+from app.models import FirewallObject, NatRule, ParseResult, PolicyRule, Vendor
 
 ANY_VALUES = {"any", "any4", "any6", "all", "0.0.0.0/0", "::/0"}
 
@@ -45,6 +45,7 @@ def _dedupe(items: list[str]) -> list[str]:
 def parse_cisco_asa(device_name: str, config_text: str) -> ParseResult:
     policies: list[PolicyRule] = []
     objects: list[FirewallObject] = []
+    nat_rules: list[NatRule] = []
     warnings: list[str] = []
     current_object: tuple[str, str] | None = None
     current_group: tuple[str, str] | None = None
@@ -53,6 +54,10 @@ def parse_cisco_asa(device_name: str, config_text: str) -> ParseResult:
     for line_no, raw_line in enumerate(config_text.splitlines(), start=1):
         line = raw_line.strip()
         if not line or line.startswith("!"):
+            continue
+
+        if line.startswith("nat "):
+            nat_rules.append(_asa_nat_rule(device_name, line, line_no, None))
             continue
 
         access_group_match = re.match(r"^access-group\s+(\S+)\s+(in|out)\s+interface\s+(\S+)", line)
@@ -74,6 +79,9 @@ def parse_cisco_asa(device_name: str, config_text: str) -> ParseResult:
             continue
 
         if current_object:
+            if line.startswith("nat "):
+                nat_rules.append(_asa_nat_rule(device_name, line, line_no, current_object[1]))
+                continue
             value_match = re.match(r"^(host|subnet|range|service|description)\s+(.+)", line)
             if value_match:
                 objects.append(
@@ -138,7 +146,57 @@ def parse_cisco_asa(device_name: str, config_text: str) -> ParseResult:
         if policy.rule_name in acl_bindings:
             policy.source_zones = [acl_bindings[policy.rule_name]]
 
-    return ParseResult(vendor=Vendor.cisco_asa, device_name=device_name, policies=policies, objects=_dedupe_objects(objects), warnings=warnings)
+    return ParseResult(vendor=Vendor.cisco_asa, device_name=device_name, policies=policies, objects=_dedupe_objects(objects), nat_rules=nat_rules, warnings=warnings)
+
+
+def _asa_nat_rule(device_name: str, line: str, line_no: int, object_name: str | None) -> NatRule:
+    zones = re.search(r"nat\s+\(([^,]+),([^)]+)\)", line)
+    source_zones = [zones.group(1)] if zones else []
+    destination_zones = [zones.group(2)] if zones else []
+    nat_type = "object" if object_name else "manual"
+    translated_sources: list[str] = []
+    translated_destinations: list[str] = []
+    original_sources = [f"object:{object_name}"] if object_name else []
+    original_destinations: list[str] = []
+    original_services: list[str] = []
+    tokens = line.split()
+    if "dynamic" in tokens:
+        nat_type = "dynamic"
+        idx = tokens.index("dynamic")
+        translated_sources = tokens[idx + 1 : idx + 3]
+    if "static" in tokens:
+        nat_type = "static"
+        idx = tokens.index("static")
+        translated_sources = tokens[idx + 1 : idx + 2]
+    if "source" in tokens:
+        nat_type = "source"
+        idx = tokens.index("source")
+        original_sources = tokens[idx + 2 : idx + 3] if len(tokens) > idx + 2 else original_sources
+        translated_sources = tokens[idx + 3 : idx + 4] if len(tokens) > idx + 3 else translated_sources
+    if "destination" in tokens:
+        nat_type = "destination"
+        idx = tokens.index("destination")
+        original_destinations = tokens[idx + 2 : idx + 3] if len(tokens) > idx + 2 else original_destinations
+        translated_destinations = tokens[idx + 3 : idx + 4] if len(tokens) > idx + 3 else translated_destinations
+    if "service" in tokens:
+        idx = tokens.index("service")
+        original_services = tokens[idx + 1 : idx + 3]
+    return NatRule(
+        id=_rule_id(Vendor.cisco_asa, device_name, line, line_no),
+        vendor=Vendor.cisco_asa,
+        device_name=device_name,
+        rule_name=object_name or f"nat-line-{line_no}",
+        nat_type=nat_type,
+        source_zones=source_zones,
+        destination_zones=destination_zones,
+        original_sources=original_sources or ["any"],
+        original_destinations=original_destinations or ["any"],
+        original_services=original_services or ["any"],
+        translated_sources=translated_sources,
+        translated_destinations=translated_destinations,
+        raw=line,
+        line_no=line_no,
+    )
 
 
 def _parse_asa_acl_endpoints(tokens: list[str], protocol: str) -> tuple[list[str], list[str], list[str]]:
@@ -173,6 +231,7 @@ def parse_palo_alto(device_name: str, config_text: str) -> ParseResult:
         return parse_palo_alto_brace(device_name, config_text)
 
     policies_by_name: dict[str, PolicyRule] = {}
+    nat_by_name: dict[str, NatRule] = {}
     objects: list[FirewallObject] = []
     warnings: list[str] = []
 
@@ -203,6 +262,23 @@ def parse_palo_alto(device_name: str, config_text: str) -> ParseResult:
             rule.raw = f"{rule.raw}\n{line}".strip()
             continue
 
+        if len(tokens) >= 6 and tokens[:3] == ["set", "rulebase", "nat"] and tokens[3] == "rules":
+            name = tokens[4]
+            rule = nat_by_name.setdefault(
+                name,
+                NatRule(
+                    id=_rule_id(Vendor.palo_alto, device_name, f"nat:{name}", line_no),
+                    vendor=Vendor.palo_alto,
+                    device_name=device_name,
+                    rule_name=name,
+                    raw="",
+                    line_no=line_no,
+                ),
+            )
+            _apply_pan_nat_tokens(rule, tokens[5:])
+            rule.raw = f"{rule.raw}\n{line}".strip()
+            continue
+
         if len(tokens) >= 6 and tokens[:3] == ["set", "address"]:
             name = tokens[2]
             objects.append(FirewallObject(name=name, type="address", value=" ".join(tokens[3:]), vendor=Vendor.palo_alto))
@@ -213,7 +289,7 @@ def parse_palo_alto(device_name: str, config_text: str) -> ParseResult:
             objects.append(FirewallObject(name=name, type="service", value=" ".join(tokens[3:]), vendor=Vendor.palo_alto))
             continue
 
-    return ParseResult(vendor=Vendor.palo_alto, device_name=device_name, policies=list(policies_by_name.values()), objects=_dedupe_objects(objects), warnings=warnings)
+    return ParseResult(vendor=Vendor.palo_alto, device_name=device_name, policies=list(policies_by_name.values()), objects=_dedupe_objects(objects), nat_rules=list(nat_by_name.values()), warnings=warnings)
 
 
 def _looks_like_pan_brace_config(config_text: str) -> bool:
@@ -224,9 +300,12 @@ def _looks_like_pan_brace_config(config_text: str) -> bool:
 def parse_palo_alto_brace(device_name: str, config_text: str) -> ParseResult:
     policies: list[PolicyRule] = []
     objects: list[FirewallObject] = []
+    nat_rules: list[NatRule] = []
     warnings: list[str] = []
     stack: list[str] = []
     current_rule: dict[str, object] | None = None
+    current_nat: dict[str, object] | None = None
+    current_nat_depth = 0
     current_rule_depth = 0
     current_object: dict[str, object] | None = None
     current_object_depth = 0
@@ -241,6 +320,10 @@ def parse_palo_alto_brace(device_name: str, config_text: str) -> ParseResult:
             current_rule["raw_lines"].append(raw_line)
             _capture_pan_brace_statement(current_rule["fields"], line)
 
+        if current_nat is not None:
+            current_nat["raw_lines"].append(raw_line)
+            _capture_pan_nat_brace_statement(current_nat["fields"], line)
+
         if current_object is not None:
             current_object["raw_lines"].append(line)
 
@@ -253,6 +336,10 @@ def parse_palo_alto_brace(device_name: str, config_text: str) -> ParseResult:
                 objects.append(_pan_brace_object_from_block(current_object))
                 current_object = None
                 current_object_depth = 0
+            if current_nat is not None and len(stack) == current_nat_depth:
+                nat_rules.append(_pan_brace_nat_from_block(device_name, current_nat))
+                current_nat = None
+                current_nat_depth = 0
             if stack:
                 stack.pop()
             else:
@@ -274,6 +361,16 @@ def parse_palo_alto_brace(device_name: str, config_text: str) -> ParseResult:
                 }
                 current_rule_depth = len(stack) + 1
 
+            if current_nat is None and stack[-3:] == ["rulebase", "nat", "rules"]:
+                nat_name = _pan_block_name(block_head)
+                current_nat = {
+                    "name": nat_name,
+                    "line_no": line_no,
+                    "raw_lines": [raw_line],
+                    "fields": {},
+                }
+                current_nat_depth = len(stack) + 1
+
             if current_object is None and parent in object_containers and "rulebase" not in stack:
                 object_name = _pan_block_name(block_head)
                 current_object = {
@@ -288,13 +385,15 @@ def parse_palo_alto_brace(device_name: str, config_text: str) -> ParseResult:
 
         if current_rule is not None:
             _capture_pan_brace_statement(current_rule["fields"], line)
+        if current_nat is not None:
+            _capture_pan_nat_brace_statement(current_nat["fields"], line)
 
     if current_rule is not None:
         warnings.append(f"Line {current_rule.get('line_no')}: unterminated security rule")
     if current_object is not None:
         warnings.append(f"Object {current_object.get('name')}: unterminated object block")
 
-    return ParseResult(vendor=Vendor.palo_alto, device_name=device_name, policies=policies, objects=_dedupe_objects(objects), warnings=warnings)
+    return ParseResult(vendor=Vendor.palo_alto, device_name=device_name, policies=policies, objects=_dedupe_objects(objects), nat_rules=nat_rules, warnings=warnings)
 
 
 def _pan_block_name(block_head: str) -> str:
@@ -316,6 +415,21 @@ def _capture_pan_brace_statement(fields: dict[str, list[str]], line: str) -> Non
     if key not in {"from", "to", "source", "destination", "service", "application", "source-user", "action", "disabled", "tag"}:
         return
     fields[key] = _pan_brace_values(raw_value)
+
+
+def _capture_pan_nat_brace_statement(fields: dict[str, list[str]], line: str) -> None:
+    match = re.match(r"^([A-Za-z0-9_-]+)\s+(.+);$", line)
+    if not match:
+        return
+    key = match.group(1)
+    raw_value = match.group(2).strip()
+    if key in {"from", "to", "source", "destination", "service", "disabled"}:
+        fields[key] = _pan_brace_values(raw_value)
+        return
+    if "source-translation" in line:
+        fields.setdefault("source-translation", []).append(line.rstrip(";"))
+    if "destination-translation" in line:
+        fields.setdefault("destination-translation", []).append(line.rstrip(";"))
 
 
 def _pan_brace_values(raw_value: str) -> list[str]:
@@ -353,6 +467,50 @@ def _pan_brace_rule_from_block(device_name: str, data: dict[str, object]) -> Pol
         line_no=line_no,
         tags=_dedupe(fields.get("tag", [])),
     )
+
+
+def _pan_brace_nat_from_block(device_name: str, data: dict[str, object]) -> NatRule:
+    fields = data["fields"]
+    assert isinstance(fields, dict)
+    raw = "\n".join(data["raw_lines"])
+    line_no = int(data["line_no"])
+    name = str(data["name"])
+    src_translation = fields.get("source-translation", []) + _pan_translation_addresses(raw, "source-translation")
+    dst_translation = fields.get("destination-translation", []) + _pan_translation_addresses(raw, "destination-translation")
+    nat_type = "source-destination" if src_translation and dst_translation else "source" if src_translation else "destination" if dst_translation else "nat"
+    return NatRule(
+        id=_rule_id(Vendor.palo_alto, device_name, f"nat:{raw}", line_no),
+        vendor=Vendor.palo_alto,
+        device_name=device_name,
+        rule_name=name,
+        nat_type=nat_type,
+        source_zones=_dedupe(fields.get("from", [])),
+        destination_zones=_dedupe(fields.get("to", [])),
+        original_sources=_dedupe(fields.get("source", [])),
+        original_destinations=_dedupe(fields.get("destination", [])),
+        original_services=_dedupe(fields.get("service", [])),
+        translated_sources=_dedupe(src_translation),
+        translated_destinations=_dedupe(dst_translation),
+        enabled=(fields.get("disabled", ["no"]) or ["no"])[0].lower() not in {"yes", "true"},
+        raw=raw,
+        line_no=line_no,
+    )
+
+
+def _pan_translation_addresses(raw: str, section: str) -> list[str]:
+    idx = raw.find(section)
+    if idx < 0:
+        return []
+    next_sections = [pos for pos in [raw.find("source-translation", idx + 1), raw.find("destination-translation", idx + 1)] if pos > idx]
+    end = min(next_sections) if next_sections else len(raw)
+    block = raw[idx:end]
+    values = re.findall(r"translated-address\s+([^;\s]+)", block)
+    values += re.findall(r"translated-port\s+([^;\s]+)", block)
+    if "dynamic-ip-and-port" in block and not values:
+        values.append("dynamic-ip-and-port")
+    if "static-ip" in block and not values:
+        values.append("static-ip")
+    return values
 
 
 def _pan_brace_object_from_block(data: dict[str, object]) -> FirewallObject:
@@ -394,13 +552,40 @@ def _apply_pan_rule_tokens(rule: PolicyRule, tokens: list[str]) -> None:
         rule.tags = _dedupe(rule.tags + values)
 
 
+def _apply_pan_nat_tokens(rule: NatRule, tokens: list[str]) -> None:
+    if not tokens:
+        return
+    key = tokens[0]
+    values = tokens[1:]
+    if key == "from":
+        rule.source_zones = _dedupe(rule.source_zones + values)
+    elif key == "to":
+        rule.destination_zones = _dedupe(rule.destination_zones + values)
+    elif key == "source":
+        rule.original_sources = _dedupe(rule.original_sources + values)
+    elif key == "destination":
+        rule.original_destinations = _dedupe(rule.original_destinations + values)
+    elif key == "service":
+        rule.original_services = _dedupe(rule.original_services + values)
+    elif key == "disabled" and values:
+        rule.enabled = values[0].lower() not in {"yes", "true"}
+    elif key == "source-translation":
+        rule.nat_type = "source"
+        rule.translated_sources = _dedupe(rule.translated_sources + [" ".join(values)])
+    elif key == "destination-translation":
+        rule.nat_type = "destination"
+        rule.translated_destinations = _dedupe(rule.translated_destinations + [" ".join(values)])
+
+
 def parse_fortinet(device_name: str, config_text: str) -> ParseResult:
     policies: list[PolicyRule] = []
     objects: list[FirewallObject] = []
+    nat_rules: list[NatRule] = []
     warnings: list[str] = []
     section: str | None = None
     current_policy: dict[str, str] | None = None
     current_object: dict[str, str] | None = None
+    current_nat_object: dict[str, str] | None = None
 
     for line_no, raw_line in enumerate(config_text.splitlines(), start=1):
         line = raw_line.strip()
@@ -413,10 +598,14 @@ def parse_fortinet(device_name: str, config_text: str) -> ParseResult:
         if line in {"config firewall address", "config firewall service custom", "config firewall addrgrp", "config firewall service group"}:
             section = line.replace("config firewall ", "")
             continue
+        if line in {"config firewall vip", "config firewall ippool", "config firewall central-snat-map"}:
+            section = line.replace("config firewall ", "")
+            continue
         if line == "end":
             section = None
             current_policy = None
             current_object = None
+            current_nat_object = None
             continue
 
         edit_match = re.match(r'^edit\s+"?([^"]+)"?$', line)
@@ -424,12 +613,18 @@ def parse_fortinet(device_name: str, config_text: str) -> ParseResult:
             current_policy = {"policyid": edit_match.group(1), "line_no": str(line_no), "raw": raw_line}
             continue
         if edit_match and section and section != "policy":
-            current_object = {"name": edit_match.group(1), "type": section, "value": ""}
+            if section in {"vip", "ippool", "central-snat-map"}:
+                current_nat_object = {"name": edit_match.group(1), "type": section, "line_no": str(line_no), "raw": raw_line}
+            else:
+                current_object = {"name": edit_match.group(1), "type": section, "value": ""}
             continue
 
         if line == "next":
             if current_policy:
                 policies.append(_fortinet_policy_from_block(Vendor.fortinet, device_name, current_policy))
+                nat_rule = _fortinet_policy_nat_from_block(device_name, current_policy)
+                if nat_rule:
+                    nat_rules.append(nat_rule)
             if current_object:
                 objects.append(
                     FirewallObject(
@@ -439,8 +634,11 @@ def parse_fortinet(device_name: str, config_text: str) -> ParseResult:
                         vendor=Vendor.fortinet,
                     )
                 )
+            if current_nat_object:
+                nat_rules.append(_fortinet_nat_object_from_block(device_name, current_nat_object))
             current_policy = None
             current_object = None
+            current_nat_object = None
             continue
 
         set_match = re.match(r"^set\s+(\S+)\s+(.+)$", line)
@@ -451,8 +649,12 @@ def parse_fortinet(device_name: str, config_text: str) -> ParseResult:
         if set_match and current_object is not None:
             current_object["value"] = f"{current_object.get('value', '')} {set_match.group(1)}={set_match.group(2)}".strip()
             continue
+        if set_match and current_nat_object is not None:
+            current_nat_object[set_match.group(1)] = set_match.group(2)
+            current_nat_object["raw"] = f"{current_nat_object.get('raw', '')}\n{raw_line}".strip()
+            continue
 
-    return ParseResult(vendor=Vendor.fortinet, device_name=device_name, policies=policies, objects=_dedupe_objects(objects), warnings=warnings)
+    return ParseResult(vendor=Vendor.fortinet, device_name=device_name, policies=policies, objects=_dedupe_objects(objects), nat_rules=nat_rules, warnings=warnings)
 
 
 def _fortinet_policy_from_block(vendor: Vendor, device_name: str, data: dict[str, str]) -> PolicyRule:
@@ -477,12 +679,64 @@ def _fortinet_policy_from_block(vendor: Vendor, device_name: str, data: dict[str
     )
 
 
+def _fortinet_policy_nat_from_block(device_name: str, data: dict[str, str]) -> NatRule | None:
+    if data.get("nat", "").strip('"').lower() not in {"enable", "enabled", "yes"}:
+        return None
+    raw = data.get("raw", "")
+    line_no = int(data.get("line_no", "0")) or None
+    policyid = data.get("policyid", "unknown")
+    name = data.get("name", policyid).strip('"')
+    return NatRule(
+        id=_rule_id(Vendor.fortinet, device_name, f"nat-policy:{raw or policyid}", line_no),
+        vendor=Vendor.fortinet,
+        device_name=device_name,
+        rule_name=f"policy-{name}",
+        nat_type="source",
+        source_zones=_split_csvish(data.get("srcintf", "")),
+        destination_zones=_split_csvish(data.get("dstintf", "")),
+        original_sources=_split_csvish(data.get("srcaddr", "")),
+        original_destinations=_split_csvish(data.get("dstaddr", "")),
+        original_services=_split_csvish(data.get("service", "")),
+        translated_sources=_split_csvish(data.get("ippool", "")) or _split_csvish(data.get("poolname", "")) or ["outgoing-interface"],
+        raw=raw,
+        line_no=line_no,
+    )
+
+
+def _fortinet_nat_object_from_block(device_name: str, data: dict[str, str]) -> NatRule:
+    raw = data.get("raw", "")
+    line_no = int(data.get("line_no", "0")) or None
+    section = data.get("type", "nat")
+    nat_type = "destination" if section == "vip" else "source"
+    return NatRule(
+        id=_rule_id(Vendor.fortinet, device_name, f"nat-object:{raw or data.get('name')}", line_no),
+        vendor=Vendor.fortinet,
+        device_name=device_name,
+        rule_name=data.get("name", f"nat-{line_no}"),
+        nat_type=nat_type,
+        source_zones=_split_csvish(data.get("srcintf", "")),
+        destination_zones=_split_csvish(data.get("dstintf", "")),
+        original_sources=_split_csvish(data.get("srcaddr", "")) or ["any"],
+        original_destinations=_split_csvish(data.get("extip", "")) or _split_csvish(data.get("orig-addr", "")) or ["any"],
+        original_services=_split_csvish(data.get("service", "")) or ["any"],
+        translated_sources=_split_csvish(data.get("startip", "")) + _split_csvish(data.get("endip", "")),
+        translated_destinations=_split_csvish(data.get("mappedip", "")) or _split_csvish(data.get("mapped-addr", "")),
+        translated_services=_split_csvish(data.get("mappedport", "")),
+        enabled=data.get("status", "enable").strip('"') != "disable",
+        raw=raw,
+        line_no=line_no,
+    )
+
+
 def parse_huawei(device_name: str, config_text: str) -> ParseResult:
     policies: list[PolicyRule] = []
     objects: list[FirewallObject] = []
+    nat_rules: list[NatRule] = []
     warnings: list[str] = []
     in_security_policy = False
+    in_nat_policy = False
     current_policy: dict[str, object] | None = None
+    current_nat: dict[str, object] | None = None
 
     for line_no, raw_line in enumerate(config_text.splitlines(), start=1):
         line = raw_line.strip()
@@ -492,12 +746,24 @@ def parse_huawei(device_name: str, config_text: str) -> ParseResult:
         if line in {"security-policy", "security-policy ipv6"}:
             in_security_policy = True
             continue
+        if line == "nat-policy":
+            in_nat_policy = True
+            continue
 
         if line == "#":
             if current_policy:
                 policies.append(_huawei_policy_from_block(device_name, current_policy))
                 current_policy = None
+            if current_nat:
+                nat_rules.append(_huawei_nat_from_block(device_name, current_nat))
+                current_nat = None
             in_security_policy = False
+            in_nat_policy = False
+            continue
+
+        nat_server = re.match(r"^nat\s+server\s+(.+)$", line)
+        if nat_server:
+            nat_rules.append(_huawei_nat_server_rule(device_name, line, line_no))
             continue
 
         address_set = re.match(r"^ip address-set\s+(\S+)", line)
@@ -508,6 +774,34 @@ def parse_huawei(device_name: str, config_text: str) -> ParseResult:
         service_set = re.match(r"^(ip )?service-set\s+(\S+)", line)
         if service_set:
             objects.append(FirewallObject(name=service_set.group(2), type="service-set", value=line, vendor=Vendor.huawei))
+            continue
+
+        if in_nat_policy:
+            rule_match = re.match(r"^rule\s+name\s+(.+)$", line)
+            if rule_match:
+                if current_nat:
+                    nat_rules.append(_huawei_nat_from_block(device_name, current_nat))
+                current_nat = {"name": rule_match.group(1).strip('"'), "line_no": line_no, "raw": raw_line, "fields": {}}
+                continue
+            if current_nat is not None:
+                current_nat["raw"] = f"{current_nat.get('raw', '')}\n{raw_line}".strip()
+                fields = current_nat["fields"]
+                assert isinstance(fields, dict)
+                for key, target in [
+                    ("source-zone", "source_zones"),
+                    ("destination-zone", "destination_zones"),
+                    ("source-address", "original_sources"),
+                    ("destination-address", "original_destinations"),
+                    ("service", "original_services"),
+                ]:
+                    if line.startswith(f"{key} "):
+                        fields.setdefault(target, []).extend(_huawei_values(line[len(key) :].strip()))
+                        break
+                else:
+                    if line.startswith("action "):
+                        fields.setdefault("translation", []).append(line)
+                    elif line == "disable":
+                        fields["enabled"] = ["false"]
             continue
 
         if not in_security_policy:
@@ -548,8 +842,10 @@ def parse_huawei(device_name: str, config_text: str) -> ParseResult:
 
     if current_policy:
         policies.append(_huawei_policy_from_block(device_name, current_policy))
+    if current_nat:
+        nat_rules.append(_huawei_nat_from_block(device_name, current_nat))
 
-    return ParseResult(vendor=Vendor.huawei, device_name=device_name, policies=policies, objects=_dedupe_objects(objects), warnings=warnings)
+    return ParseResult(vendor=Vendor.huawei, device_name=device_name, policies=policies, objects=_dedupe_objects(objects), nat_rules=nat_rules, warnings=warnings)
 
 
 def _huawei_values(value: str) -> list[str]:
@@ -577,6 +873,51 @@ def _huawei_policy_from_block(device_name: str, data: dict[str, object]) -> Poli
         action=(fields.get("action", ["unknown"]) or ["unknown"])[0],
         enabled=(fields.get("enabled", ["true"]) or ["true"])[0] != "false",
         raw=raw,
+        line_no=line_no,
+    )
+
+
+def _huawei_nat_from_block(device_name: str, data: dict[str, object]) -> NatRule:
+    fields = data.get("fields", {})
+    assert isinstance(fields, dict)
+    raw = str(data.get("raw", ""))
+    line_no = int(data.get("line_no", "0")) or None
+    translation = _dedupe(fields.get("translation", []))
+    nat_type = "source" if any("source-nat" in item for item in translation) else "destination" if any("destination-nat" in item for item in translation) else "nat"
+    return NatRule(
+        id=_rule_id(Vendor.huawei, device_name, f"nat:{raw or str(data.get('name'))}", line_no),
+        vendor=Vendor.huawei,
+        device_name=device_name,
+        rule_name=str(data.get("name", "unknown")),
+        nat_type=nat_type,
+        source_zones=_dedupe(fields.get("source_zones", [])),
+        destination_zones=_dedupe(fields.get("destination_zones", [])),
+        original_sources=_dedupe(fields.get("original_sources", [])),
+        original_destinations=_dedupe(fields.get("original_destinations", [])),
+        original_services=_dedupe(fields.get("original_services", [])),
+        translated_sources=translation if nat_type == "source" else [],
+        translated_destinations=translation if nat_type == "destination" else [],
+        enabled=(fields.get("enabled", ["true"]) or ["true"])[0] != "false",
+        raw=raw,
+        line_no=line_no,
+    )
+
+
+def _huawei_nat_server_rule(device_name: str, line: str, line_no: int) -> NatRule:
+    global_match = re.search(r"\bglobal\s+(\S+)", line)
+    inside_match = re.search(r"\binside\s+(\S+)", line)
+    protocol_match = re.search(r"\bprotocol\s+(\S+)", line)
+    return NatRule(
+        id=_rule_id(Vendor.huawei, device_name, line, line_no),
+        vendor=Vendor.huawei,
+        device_name=device_name,
+        rule_name=f"nat-server-{line_no}",
+        nat_type="destination",
+        original_sources=["any"],
+        original_destinations=[global_match.group(1)] if global_match else ["any"],
+        original_services=[protocol_match.group(1)] if protocol_match else ["any"],
+        translated_destinations=[inside_match.group(1)] if inside_match else [],
+        raw=line,
         line_no=line_no,
     )
 

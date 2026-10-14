@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from app.analyzer import analyze_policies
-from app.models import ChangeRequest, Dashboard, DeviceConnection, DeviceConnectionRequest, FirewallObject, ParseResult, PolicyRule
+from app.models import ChangeRequest, Dashboard, DeviceConnection, DeviceConnectionRequest, FirewallObject, NatRule, ParseResult, PolicyRule
 
 DATA_DIR = Path("data")
 DB_PATH = DATA_DIR / "firewall_policy_tools.db"
@@ -47,6 +47,13 @@ def init_db() -> None:
               name text not null,
               type text not null,
               value text not null
+            );
+            create table if not exists nat_rules (
+              id text primary key,
+              vendor text not null,
+              device_name text not null,
+              payload text not null,
+              imported_at text default current_timestamp
             );
             create table if not exists change_requests (
               id integer primary key autoincrement,
@@ -137,10 +144,25 @@ def save_parse_result(result: ParseResult) -> dict[str, int]:
                 (stored_obj.vendor.value, stored_obj.device_name, stored_obj.name, stored_obj.type, stored_obj.value),
             )
         conn.execute(
-            "insert into audit_log(event, detail) values (?, ?)",
-            ("import_config", f"{result.device_name} {result.vendor.value}: {len(result.policies)} policies, {len(result.objects)} objects"),
+            "delete from nat_rules where vendor in (" + ",".join("?" for _ in vendor_values) + ") and device_name = ?",
+            (*vendor_values, result.device_name),
         )
-    return {"policies": len(result.policies), "objects": len(result.objects), "warnings": len(result.warnings)}
+        for nat_rule in result.nat_rules:
+            conn.execute(
+                """
+                insert or replace into nat_rules(id, vendor, device_name, payload)
+                values (?, ?, ?, ?)
+                """,
+                (nat_rule.id, nat_rule.vendor.value, nat_rule.device_name, nat_rule.model_dump_json()),
+            )
+        conn.execute(
+            "insert into audit_log(event, detail) values (?, ?)",
+            (
+                "import_config",
+                f"{result.device_name} {result.vendor.value}: {len(result.policies)} policies, {len(result.objects)} objects, {len(result.nat_rules)} NAT rules",
+            ),
+        )
+    return {"policies": len(result.policies), "objects": len(result.objects), "nat_rules": len(result.nat_rules), "warnings": len(result.warnings)}
 
 
 def list_policies(vendor: str | None = None, query: str | None = None, action: str | None = None, device_name: str | None = None) -> list[PolicyRule]:
@@ -189,6 +211,102 @@ def list_objects(vendor: str | None = None, query: str | None = None, device_nam
         q = query.lower()
         objects = [obj for obj in objects if q in obj.model_dump_json().lower()]
     return objects
+
+
+def list_nat_rules(vendor: str | None = None, query: str | None = None, device_name: str | None = None, nat_type: str | None = None) -> list[NatRule]:
+    sql = "select payload from nat_rules"
+    params: list[Any] = []
+    clauses: list[str] = []
+    vendor_values = _vendor_filter_values(vendor)
+    if vendor_values:
+        clauses.append("vendor in (" + ",".join("?" for _ in vendor_values) + ")")
+        params.extend(vendor_values)
+    if device_name:
+        clauses.append("device_name = ?")
+        params.append(device_name)
+    if clauses:
+        sql += " where " + " and ".join(clauses)
+    sql += " order by imported_at desc"
+    with get_conn() as conn:
+        rules = [NatRule.model_validate_json(row["payload"]) for row in conn.execute(sql, params)]
+    if nat_type:
+        rules = [rule for rule in rules if rule.nat_type.lower() == nat_type.lower()]
+    if query:
+        q = query.lower()
+        rules = [rule for rule in rules if q in rule.model_dump_json().lower()]
+    return rules
+
+
+def analyze_nat_rules(rules: list[NatRule]) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    seen: dict[tuple, list[NatRule]] = {}
+    for rule in rules:
+        key = (
+            tuple(sorted(rule.source_zones)),
+            tuple(sorted(rule.destination_zones)),
+            tuple(sorted(rule.original_sources)),
+            tuple(sorted(rule.original_destinations)),
+            tuple(sorted(rule.original_services)),
+            tuple(sorted(rule.translated_sources)),
+            tuple(sorted(rule.translated_destinations)),
+            rule.nat_type,
+        )
+        seen.setdefault(key, []).append(rule)
+        broad_src = _has_nat_any(rule.original_sources)
+        broad_dst = _has_nat_any(rule.original_destinations)
+        broad_svc = _has_nat_any(rule.original_services)
+        if rule.enabled and broad_src and broad_dst:
+            findings.append(
+                {
+                    "severity": "high",
+                    "category": "broad-nat",
+                    "title": "Broad NAT Match",
+                    "detail": f"{rule.rule_name} matches any source and any destination.",
+                    "rule_ids": [rule.id],
+                    "recommendation": "Narrow original source and destination, or confirm this is an intentional catch-all NAT rule.",
+                }
+            )
+        if rule.enabled and broad_svc and rule.nat_type in {"destination", "dnat", "static"}:
+            findings.append(
+                {
+                    "severity": "medium",
+                    "category": "broad-service-nat",
+                    "title": "Broad Service Translation",
+                    "detail": f"{rule.rule_name} has no explicit service limit.",
+                    "rule_ids": [rule.id],
+                    "recommendation": "Limit destination/static NAT to required services where possible.",
+                }
+            )
+        if rule.enabled and rule.translated_destinations and _has_nat_any(rule.original_sources):
+            findings.append(
+                {
+                    "severity": "medium",
+                    "category": "public-inbound-nat",
+                    "title": "Inbound NAT from Any Source",
+                    "detail": f"{rule.rule_name} translates to {', '.join(rule.translated_destinations)} from any source.",
+                    "rule_ids": [rule.id],
+                    "recommendation": "Restrict allowed source networks in both NAT and security policy.",
+                }
+            )
+    for group in seen.values():
+        if len(group) > 1:
+            findings.append(
+                {
+                    "severity": "medium",
+                    "category": "duplicate-nat",
+                    "title": "Duplicate NAT Rules",
+                    "detail": ", ".join(rule.rule_name for rule in group) + " have the same NAT match and translation.",
+                    "rule_ids": [rule.id for rule in group],
+                    "recommendation": "Keep one canonical NAT rule and remove or disable duplicates after validation.",
+                }
+            )
+    return findings[:300]
+
+
+def _has_nat_any(values: list[str]) -> bool:
+    if not values:
+        return True
+    return any(value.lower().strip('"') in {"any", "all", "0.0.0.0/0", "::/0"} for value in values)
 
 
 def create_change_request(request: ChangeRequest) -> dict[str, Any]:
@@ -316,6 +434,7 @@ def list_audit_log(limit: int = 50) -> list[dict[str, Any]]:
 def inventory(vendor: str | None = None, device_name: str | None = None) -> dict[str, Any]:
     policies = list_policies(vendor=vendor, device_name=device_name)
     objects = list_objects(vendor=vendor, device_name=device_name)
+    nat_rules = list_nat_rules(vendor=vendor, device_name=device_name)
     devices: dict[tuple[str, str], dict[str, Any]] = {}
     values: dict[str, set[str]] = {
         "zones": set(),
@@ -335,6 +454,7 @@ def inventory(vendor: str | None = None, device_name: str | None = None) -> dict
                 "vendor": display_vendor,
                 "device_name": policy.device_name,
                 "policy_count": 0,
+                "nat_rule_count": 0,
                 "object_count": 0,
                 "context_label": "ACL / Interface" if display_vendor == "cisco_asa" else "Zone",
             },
@@ -358,6 +478,7 @@ def inventory(vendor: str | None = None, device_name: str | None = None) -> dict
                 "vendor": display_vendor,
                 "device_name": obj.device_name,
                 "policy_count": 0,
+                "nat_rule_count": 0,
                 "object_count": 0,
                 "context_label": "ACL / Interface" if display_vendor == "cisco_asa" else "Zone",
             },
@@ -367,6 +488,21 @@ def inventory(vendor: str | None = None, device_name: str | None = None) -> dict
             values["services"].add(obj.name)
         else:
             values["addresses"].add(obj.name)
+    for rule in nat_rules:
+        display_vendor = _display_vendor(rule.vendor.value)
+        key = (display_vendor, rule.device_name)
+        device = devices.setdefault(
+            key,
+            {
+                "vendor": display_vendor,
+                "device_name": rule.device_name,
+                "policy_count": 0,
+                "nat_rule_count": 0,
+                "object_count": 0,
+                "context_label": "ACL / Interface" if display_vendor == "cisco_asa" else "Zone",
+            },
+        )
+        device["nat_rule_count"] += 1
 
     return {
         "devices": sorted(devices.values(), key=lambda item: (item["vendor"], item["device_name"])),
@@ -377,6 +513,7 @@ def inventory(vendor: str | None = None, device_name: str | None = None) -> dict
 def dashboard(vendor: str | None = None, device_name: str | None = None) -> Dashboard:
     policies = list_policies(vendor=vendor, device_name=device_name)
     objects = list_objects(vendor=vendor, device_name=device_name)
+    nat_rules = list_nat_rules(vendor=vendor, device_name=device_name)
     findings = analyze_policies(policies)
     vendor_counts: dict[str, int] = {}
     action_counts: dict[str, int] = {}
@@ -388,6 +525,7 @@ def dashboard(vendor: str | None = None, device_name: str | None = None) -> Dash
         cr_count = conn.execute("select count(*) as c from change_requests").fetchone()["c"]
     return Dashboard(
         policy_count=len(policies),
+        nat_rule_count=len(nat_rules),
         object_count=len(objects),
         change_request_count=cr_count,
         finding_count=len(findings),

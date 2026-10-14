@@ -12,12 +12,14 @@ from app.parser import parse_config
 from app.precheck import precheck_policy_request
 from app.storage import (
     create_change_request,
+    analyze_nat_rules,
     dashboard,
     get_device_connection,
     init_db,
     inventory,
     list_audit_log,
     list_change_requests,
+    list_nat_rules,
     list_device_connections,
     list_objects,
     list_policies,
@@ -177,6 +179,18 @@ def api_objects(vendor: str | None = None, query: str | None = None, device_name
     if vendor and vendor not in {v.value for v in Vendor}:
         raise HTTPException(status_code=400, detail="Unsupported vendor")
     return list_objects(vendor=vendor, query=query, device_name=device_name)
+
+
+@app.get("/api/nat-rules")
+def api_nat_rules(vendor: str | None = None, query: str | None = None, device_name: str | None = None, nat_type: str | None = None):
+    if vendor and vendor not in {v.value for v in Vendor}:
+        raise HTTPException(status_code=400, detail="Unsupported vendor")
+    return list_nat_rules(vendor=vendor, query=query, device_name=device_name, nat_type=nat_type)
+
+
+@app.get("/api/nat-analysis")
+def api_nat_analysis(vendor: str | None = None, device_name: str | None = None):
+    return analyze_nat_rules(list_nat_rules(vendor=vendor, device_name=device_name))
 
 
 @app.get("/api/analysis")
