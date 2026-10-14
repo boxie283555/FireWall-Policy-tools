@@ -2,14 +2,15 @@ from __future__ import annotations
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from app.analyzer import analyze_policies
 from app.device_access import FetchConfigError, fetch_running_config, test_device_connection
-from app.models import ChangeRequest, DeviceConnectionRequest, DeviceCredentialRequest, ImportRequest, PolicyPrecheckRequest, Vendor
+from app.models import ChangeRequest, ChangeStatusRequest, DeviceConnectionRequest, DeviceCredentialRequest, ImportRequest, PolicyPrecheckRequest, Vendor
 from app.parser import parse_config
 from app.precheck import precheck_policy_request
+from app.reporting import analysis_summary, findings_csv, nat_csv, policies_csv
 from app.storage import (
     create_change_request,
     analyze_nat_rules,
@@ -24,6 +25,7 @@ from app.storage import (
     list_objects,
     list_policies,
     save_parse_result,
+    update_change_request_status,
     update_device_connection_status,
     upsert_device_connection,
 )
@@ -203,6 +205,30 @@ def api_analysis(vendor: str | None = None, device_name: str | None = None):
     return analyze_policies(list_policies(vendor=vendor, device_name=device_name))
 
 
+@app.get("/api/report/summary")
+def api_report_summary(vendor: str | None = None, device_name: str | None = None):
+    policies = list_policies(vendor=vendor, device_name=device_name)
+    nat_rules = list_nat_rules(vendor=vendor, device_name=device_name)
+    return analysis_summary(analyze_policies(policies), analyze_nat_rules(nat_rules))
+
+
+@app.get("/api/export/findings.csv")
+def api_export_findings(vendor: str | None = None, device_name: str | None = None):
+    policies = list_policies(vendor=vendor, device_name=device_name)
+    nat_rules = list_nat_rules(vendor=vendor, device_name=device_name)
+    return _csv_response("firewall-findings.csv", findings_csv(analyze_policies(policies), analyze_nat_rules(nat_rules)))
+
+
+@app.get("/api/export/policies.csv")
+def api_export_policies(vendor: str | None = None, device_name: str | None = None):
+    return _csv_response("firewall-policies.csv", policies_csv(list_policies(vendor=vendor, device_name=device_name)))
+
+
+@app.get("/api/export/nat.csv")
+def api_export_nat(vendor: str | None = None, device_name: str | None = None):
+    return _csv_response("firewall-nat.csv", nat_csv(list_nat_rules(vendor=vendor, device_name=device_name)))
+
+
 @app.get("/api/visualization/matrix")
 def api_matrix(vendor: str | None = None, device_name: str | None = None):
     return zone_matrix(list_policies(vendor=vendor, device_name=device_name))
@@ -288,6 +314,24 @@ def api_change_requests():
     return list_change_requests()
 
 
+@app.patch("/api/change-requests/{request_id}/status")
+def api_update_change_request_status(request_id: int, request: ChangeStatusRequest):
+    if request.status not in {"draft", "review", "approved", "rejected", "implemented"}:
+        raise HTTPException(status_code=400, detail="Unsupported change status")
+    try:
+        return update_change_request_status(request_id, request.status)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Change request not found") from None
+
+
 @app.get("/api/audit")
 def api_audit(limit: int = 50):
     return list_audit_log(limit)
+
+
+def _csv_response(filename: str, content: str) -> Response:
+    return Response(
+        content=content,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

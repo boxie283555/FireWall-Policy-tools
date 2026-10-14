@@ -198,6 +198,10 @@ class ChangeRequest(BaseModel):
     status: str = "draft"
 
 
+class ChangeStatusRequest(BaseModel):
+    status: str
+
+
 class StoredChangeRequest(ChangeRequest):
     id: int
     created_at: str

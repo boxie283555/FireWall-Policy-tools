@@ -426,6 +426,17 @@ def list_change_requests() -> list[dict[str, Any]]:
         return [dict(row) for row in conn.execute("select * from change_requests order by id desc")]
 
 
+def update_change_request_status(request_id: int, status: str) -> dict[str, Any]:
+    with get_conn() as conn:
+        row = conn.execute("select * from change_requests where id = ?", (request_id,)).fetchone()
+        if row is None:
+            raise KeyError(f"change request {request_id} not found")
+        conn.execute("update change_requests set status = ? where id = ?", (status, request_id))
+        conn.execute("insert into audit_log(event, detail) values (?, ?)", ("update_change_request_status", f"#{request_id} {status}"))
+        updated = conn.execute("select * from change_requests where id = ?", (request_id,)).fetchone()
+    return dict(updated)
+
+
 def list_audit_log(limit: int = 50) -> list[dict[str, Any]]:
     with get_conn() as conn:
         return [dict(row) for row in conn.execute("select * from audit_log order by id desc limit ?", (limit,))]

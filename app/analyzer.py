@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import date, datetime, timedelta
 
 from app.models import AnalysisFinding, PolicyRule
 from app.parser import ANY_VALUES
@@ -41,6 +42,7 @@ DANGEROUS_APPS = {
 
 def analyze_policies(policies: list[PolicyRule]) -> list[AnalysisFinding]:
     findings: list[AnalysisFinding] = []
+    findings.extend(_lifecycle_findings(policies))
     enabled = [p for p in policies if p.enabled]
 
     for policy in enabled:
@@ -138,6 +140,96 @@ def analyze_policies(policies: list[PolicyRule]) -> list[AnalysisFinding]:
     findings.extend(_conflict_findings(enabled))
     findings.extend(_merge_findings(enabled))
     return findings
+
+
+def _lifecycle_findings(policies: list[PolicyRule]) -> list[AnalysisFinding]:
+    findings: list[AnalysisFinding] = []
+    today = date.today()
+    soon = today + timedelta(days=30)
+    for policy in policies:
+        is_allow = policy.action.lower() in {"allow", "permit", "accept"}
+        if not policy.enabled:
+            findings.append(
+                AnalysisFinding(
+                    severity="low",
+                    category="lifecycle",
+                    title="Disabled Rule Present",
+                    detail=f"{policy.rule_name} is disabled but still present in the rulebase.",
+                    policy_ids=[policy.id],
+                    recommendation="Confirm whether the disabled rule is still needed; remove stale rules after the retention period.",
+                )
+            )
+            continue
+
+        expires_at = _parse_policy_date(policy.expires_at)
+        if expires_at and expires_at < today:
+            findings.append(
+                AnalysisFinding(
+                    severity="high" if is_allow else "medium",
+                    category="lifecycle",
+                    title="Expired Rule Still Enabled",
+                    detail=f"{policy.rule_name} expired on {expires_at.isoformat()} but is still enabled.",
+                    policy_ids=[policy.id],
+                    recommendation="Disable or remove the rule, or renew the expiration after business approval.",
+                )
+            )
+        elif expires_at and today <= expires_at <= soon:
+            findings.append(
+                AnalysisFinding(
+                    severity="medium",
+                    category="lifecycle",
+                    title="Rule Expiring Soon",
+                    detail=f"{policy.rule_name} expires on {expires_at.isoformat()}.",
+                    policy_ids=[policy.id],
+                    recommendation="Review with the owner before the expiration date and remove temporary access if no longer needed.",
+                )
+            )
+
+        risky_allow = is_allow and (
+            _has_any(policy.source_addresses)
+            or _has_any(policy.destination_addresses)
+            or _has_any(policy.services)
+            or bool(_dangerous_services(policy.services))
+            or bool(_dangerous_apps(policy.applications))
+        )
+        if risky_allow and not policy.owner:
+            findings.append(
+                AnalysisFinding(
+                    severity="low",
+                    category="governance",
+                    title="Rule Owner Missing",
+                    detail=f"{policy.rule_name} is an allow rule with elevated review need, but no owner metadata was parsed.",
+                    policy_ids=[policy.id],
+                    recommendation="Add owner metadata in the rule description, tag, or change record so future reviews have an accountable contact.",
+                )
+            )
+        if risky_allow and not policy.expires_at:
+            findings.append(
+                AnalysisFinding(
+                    severity="low",
+                    category="governance",
+                    title="Expiration Missing",
+                    detail=f"{policy.rule_name} is an allow rule with elevated review need, but no expiration metadata was parsed.",
+                    policy_ids=[policy.id],
+                    recommendation="Add an expiration for temporary or broad access; document permanent access in the business justification.",
+                )
+            )
+    return findings
+
+
+def _parse_policy_date(value: str | None) -> date | None:
+    if not value:
+        return None
+    text = value.strip()
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%d-%m-%Y", "%Y%m%d"):
+        try:
+            return datetime.strptime(text[:10] if fmt in {"%Y-%m-%d", "%Y/%m/%d", "%d-%m-%Y"} else text[:8], fmt).date()
+        except ValueError:
+            continue
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
+    except ValueError:
+        return None
 
 
 def _has_any(values: list[str]) -> bool:

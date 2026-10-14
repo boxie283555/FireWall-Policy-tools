@@ -11,7 +11,10 @@ A web-based firewall policy management tool. It currently supports importing and
 - Object inventory for address objects, service objects, and object groups
 - Policy visualization: path analysis, matrix view, topology view, dependency graph, and rule order view
 - Policy and NAT analysis: conflicts, duplicates, shadowed or never-hit rules, overly broad rules, risky ports/applications, cross-zone risk, broad NAT, duplicate NAT, and inbound NAT exposure
+- Policy lifecycle and governance checks: disabled rules, expired rules, expiring rules, missing owner metadata, and missing expiration metadata
 - Change precheck: detects conflicts, overlap, mutual exclusion, and recommends placement before adding a policy
+- Change workflow tracking: draft, review, approved, rejected, and implemented status updates with audit log entries
+- Reporting exports: CSV exports for findings, policy inventory, and NAT inventory
 - Device access: add a management IP in the GUI, test SSH, Telnet, API/HTTPS, or NETCONF connectivity, fetch running configuration, and import it automatically
 - Local persistence: imported results and request records are stored in SQLite
 
@@ -180,8 +183,8 @@ chmod +x scripts/deploy.sh
 6. Go to `NAT Rules` to search NAT policies and review NAT analysis findings.
 7. Go to `Objects` to search objects.
 8. Go to `Path / Topology` to view path analysis, matrix, topology, dependency graph, and rule order.
-9. Go to `Risk Findings` to review security policy analysis results.
-10. Go to `Change Requests` to run precheck before adding a policy.
+9. Go to `Risk Findings` to review security policy and NAT risk summaries, then export findings, policy inventory, or NAT inventory as CSV.
+10. Go to `Change Requests` to run precheck before adding a policy and track the request status through review, approval, rejection, or implementation.
 
 ## Device Access
 

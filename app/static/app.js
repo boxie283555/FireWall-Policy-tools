@@ -474,7 +474,8 @@ function errorResult(error) {
 }
 
 async function loadAnalysis() {
-  const findings = await api(`/api/analysis?${paramsFrom({})}`);
+  const [findings, summary] = await Promise.all([api(`/api/analysis?${paramsFrom({})}`), api(`/api/report/summary?${paramsFrom({})}`)]);
+  renderRiskSummary(summary);
   const grouped = findings.reduce((acc, finding) => {
     acc[finding.category] = acc[finding.category] || [];
     acc[finding.category].push(finding);
@@ -501,6 +502,42 @@ async function loadAnalysis() {
         )
         .join("")
     : '<div class="card">No risk findings.</div>';
+}
+
+function renderRiskSummary(summary) {
+  const severity = summary.severity_counts || {};
+  $("#risk-summary").innerHTML = [
+    ["Total", summary.total_findings || 0],
+    ["Critical", severity.critical || 0],
+    ["High", severity.high || 0],
+    ["Medium", severity.medium || 0],
+    ["Low", severity.low || 0],
+  ]
+    .map(([label, value]) => `<div class="summary-item"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`)
+    .join("");
+  const categories = summary.policy_categories || [];
+  $("#category-summary").innerHTML = categories.length
+    ? categories
+        .slice(0, 12)
+        .map(
+          (item) => `<article class="mini-card">
+            <strong>${escapeHtml(item.category)}</strong>
+            <span>${escapeHtml(item.affected_count)} affected rules</span>
+          </article>`
+        )
+        .join("")
+    : '<article class="mini-card">No affected policy categories.</article>';
+}
+
+function exportCsv(kind) {
+  const endpoints = {
+    findings: "/api/export/findings.csv",
+    policies: "/api/export/policies.csv",
+    nat: "/api/export/nat.csv",
+  };
+  const endpoint = endpoints[kind];
+  if (!endpoint) return;
+  window.location.href = `${endpoint}?${paramsFrom({})}`;
 }
 
 async function loadVisualization() {
@@ -879,9 +916,27 @@ async function loadChanges() {
         <div class="card-title"><span>#${c.id} ${escapeHtml(c.title)}</span><span>${escapeHtml(c.status)}</span></div>
         <p>${escapeHtml(c.source_zone || "any")} ${escapeHtml(c.source)} → ${escapeHtml(c.destination_zone || "any")} ${escapeHtml(c.destination)} / ${escapeHtml(c.service)} / ${escapeHtml(c.application || "any")} / ${escapeHtml(c.user || "any")} / ${escapeHtml(c.action)}</p>
         <p>${escapeHtml(c.business_reason)}</p>
+        <div class="form-actions status-actions">
+          ${["review", "approved", "rejected", "implemented"]
+            .map((status) => `<button class="secondary change-status" type="button" data-id="${c.id}" data-status="${status}">${status}</button>`)
+            .join("")}
+        </div>
       </article>`
     )
     .join("");
+  $$(".change-status").forEach((button) => {
+    button.addEventListener("click", () => updateChangeStatus(Number(button.dataset.id), button.dataset.status).catch((error) => alert(error.message)));
+  });
+}
+
+async function updateChangeStatus(requestId, status) {
+  await api(`/api/change-requests/${requestId}/status`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status }),
+  });
+  await loadChanges();
+  await loadAudit();
 }
 
 async function runPolicyPrecheck() {
@@ -995,6 +1050,9 @@ $("#path-form").addEventListener("submit", runPathAnalysis);
 $("#dependency-search-form").addEventListener("submit", (event) => runDependencyObjectSearch(event).catch((error) => alert(error.message)));
 $("#policy-dependency-search-form").addEventListener("submit", (event) => runPolicyDependencySearch(event).catch((error) => alert(error.message)));
 $("#precheck-btn").addEventListener("click", () => runPolicyPrecheck().catch((error) => alert(error.message)));
+$("#export-findings").addEventListener("click", () => exportCsv("findings"));
+$("#export-policies").addEventListener("click", () => exportCsv("policies"));
+$("#export-nat").addEventListener("click", () => exportCsv("nat"));
 function syncDeviceProtocolFields() {
   const form = $("#device-form");
   const protocol = form.elements["protocol"].value;
