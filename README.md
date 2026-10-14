@@ -48,15 +48,50 @@ docker compose down
 
 数据保存在本地 `data/` 目录，默认不会提交到 Git。
 
-## 本机 Python 安装
+## 本机安装
 
-适合开发和调试：
+适合在自己的电脑上运行和调试。以下命令适用于 macOS / Linux 终端。
+
+### 1. 安装前准备
+
+确认本机已经安装：
+
+- Python 3.10 或以上版本
+- Git
+
+检查命令：
 
 ```bash
-python -m venv .venv
+python3 --version
+git --version
+```
+
+### 2. 下载代码
+
+```bash
+git clone https://github.com/boxie283555/FireWall-Policy-tools.git
+cd FireWall-Policy-tools
+```
+
+### 3. 创建 Python 虚拟环境
+
+```bash
+python3 -m venv .venv
 source .venv/bin/activate
+```
+
+激活成功后，终端前面通常会出现 `(.venv)`。
+
+### 4. 安装依赖
+
+```bash
 pip install -r requirements.txt
-uvicorn app.main:app --host 0.0.0.0 --port 8080
+```
+
+### 5. 启动服务
+
+```bash
+uvicorn app.main:app --host 127.0.0.1 --port 8080
 ```
 
 访问：
@@ -64,6 +99,48 @@ uvicorn app.main:app --host 0.0.0.0 --port 8080
 ```text
 http://127.0.0.1:8080
 ```
+
+如果希望同一局域网里的其他机器也能访问，把启动命令改成：
+
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port 8080
+```
+
+然后使用本机 IP 访问，例如：
+
+```text
+http://本机IP:8080
+```
+
+### 6. 停止服务
+
+在运行 `uvicorn` 的终端窗口按：
+
+```text
+Ctrl + C
+```
+
+### 7. 下次启动
+
+进入项目目录，激活虚拟环境后启动：
+
+```bash
+cd FireWall-Policy-tools
+source .venv/bin/activate
+uvicorn app.main:app --host 127.0.0.1 --port 8080
+```
+
+### 8. 更新代码
+
+```bash
+cd FireWall-Policy-tools
+git pull
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --host 127.0.0.1 --port 8080
+```
+
+导入后的数据保存在 `data/` 目录里，更新代码不会自动删除。
 
 ## 部署到 192.168.20.169
 
