@@ -6,7 +6,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.analyzer import analyze_policies
-from app.device_access import fetch_running_config, test_ssh_connection
+from app.device_access import fetch_running_config, test_device_connection
 from app.models import ChangeRequest, DeviceConnectionRequest, DeviceCredentialRequest, ImportRequest, PolicyPrecheckRequest, Vendor
 from app.parser import parse_config
 from app.precheck import precheck_policy_request
@@ -88,8 +88,8 @@ def api_device_connections():
 def api_upsert_device_connection(request: DeviceConnectionRequest):
     if request.vendor not in Vendor:
         raise HTTPException(status_code=400, detail="Unsupported vendor")
-    if request.protocol != "ssh":
-        raise HTTPException(status_code=400, detail="当前版本仅支持 SSH。")
+    if request.protocol not in {"ssh", "telnet"}:
+        raise HTTPException(status_code=400, detail="Only SSH and Telnet are supported.")
     return upsert_device_connection(request)
 
 
@@ -100,12 +100,12 @@ def api_test_device_connection(device_id: int, credentials: DeviceCredentialRequ
     except KeyError:
         raise HTTPException(status_code=404, detail="Device connection not found") from None
     try:
-        result = test_ssh_connection(device, credentials.password)
+        result = test_device_connection(device, credentials.password)
         update_device_connection_status(device_id, "test_ok", result["detail"])
         return result
     except Exception as exc:
         update_device_connection_status(device_id, "test_failed", str(exc))
-        raise HTTPException(status_code=400, detail=f"连接失败：{exc}") from exc
+        raise HTTPException(status_code=400, detail=f"Connection failed: {exc}") from exc
 
 
 @app.post("/api/device-connections/{device_id}/fetch")
@@ -130,7 +130,7 @@ def api_fetch_device_config(device_id: int, credentials: DeviceCredentialRequest
         }
     except Exception as exc:
         update_device_connection_status(device_id, "fetch_failed", str(exc))
-        raise HTTPException(status_code=400, detail=f"拉取失败：{exc}") from exc
+        raise HTTPException(status_code=400, detail=f"Fetch failed: {exc}") from exc
 
 
 @app.get("/api/policies")

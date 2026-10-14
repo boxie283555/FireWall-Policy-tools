@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import re
+import telnetlib
 import time
 from dataclasses import dataclass
+from typing import Protocol
 
 import paramiko
 
@@ -15,26 +17,31 @@ class FetchedConfig:
     command_log: list[str]
 
 
-def test_ssh_connection(device: DeviceConnection, password: str) -> dict[str, str]:
-    client = _connect(device, password)
+class InteractiveChannel(Protocol):
+    def send(self, command: str) -> None: ...
+    def read_until_idle(self, idle_seconds: float = 0.9, timeout: float = 45.0) -> str: ...
+    def read_available(self) -> str: ...
+    def close(self) -> None: ...
+
+
+def test_device_connection(device: DeviceConnection, password: str) -> dict[str, str]:
+    channel = _connect(device, password)
     try:
-        transport = client.get_transport()
-        remote = transport.remote_version if transport else "ssh connected"
-        return {"status": "ok", "detail": remote}
+        return {"status": "ok", "detail": f"{device.protocol} connected"}
     finally:
-        client.close()
+        channel.close()
 
 
 def fetch_running_config(device: DeviceConnection, password: str, enable_password: str | None = None) -> FetchedConfig:
     client = _connect(device, password)
     try:
-        shell = client.invoke_shell(width=240, height=1000)
         time.sleep(0.8)
-        _read_available(shell)
+        client.read_available()
         commands = _commands_for_vendor(device.vendor, enable_password)
         chunks: list[str] = []
         for command in commands:
-            chunks.append(_send_command(shell, command))
+            client.send(command + "\n")
+            chunks.append(client.read_until_idle())
         text = "\n".join(chunks)
         if enable_password:
             text = text.replace(enable_password, "<enable-password>")
@@ -43,9 +50,65 @@ def fetch_running_config(device: DeviceConnection, password: str, enable_passwor
         client.close()
 
 
-def _connect(device: DeviceConnection, password: str) -> paramiko.SSHClient:
-    if device.protocol != "ssh":
-        raise ValueError("当前版本仅支持 SSH 拉取配置。")
+def _connect(device: DeviceConnection, password: str) -> InteractiveChannel:
+    if device.protocol == "ssh":
+        return _connect_ssh(device, password)
+    if device.protocol == "telnet":
+        return _connect_telnet(device, password)
+    raise ValueError(f"Unsupported protocol: {device.protocol}")
+
+
+class SshChannel:
+    def __init__(self, client: paramiko.SSHClient):
+        self.client = client
+        self.shell = client.invoke_shell(width=240, height=1000)
+
+    def send(self, command: str) -> None:
+        self.shell.send(command)
+
+    def read_until_idle(self, idle_seconds: float = 0.9, timeout: float = 45.0) -> str:
+        return _read_ssh_until_idle(self.shell, idle_seconds, timeout)
+
+    def read_available(self) -> str:
+        chunks: list[str] = []
+        while self.shell.recv_ready():
+            chunks.append(self.shell.recv(65535).decode("utf-8", errors="replace"))
+        return "".join(chunks)
+
+    def close(self) -> None:
+        self.client.close()
+
+
+class TelnetChannel:
+    def __init__(self, client: telnetlib.Telnet):
+        self.client = client
+
+    def send(self, command: str) -> None:
+        self.client.write(command.encode("utf-8", errors="replace"))
+
+    def read_until_idle(self, idle_seconds: float = 0.9, timeout: float = 45.0) -> str:
+        deadline = time.time() + timeout
+        last_data = time.time()
+        chunks: list[str] = []
+        while time.time() < deadline:
+            data = self.client.read_very_eager()
+            if data:
+                chunks.append(data.decode("utf-8", errors="replace"))
+                last_data = time.time()
+            elif time.time() - last_data >= idle_seconds:
+                break
+            else:
+                time.sleep(0.1)
+        return "".join(chunks)
+
+    def read_available(self) -> str:
+        return self.client.read_very_eager().decode("utf-8", errors="replace")
+
+    def close(self) -> None:
+        self.client.close()
+
+
+def _connect_ssh(device: DeviceConnection, password: str) -> SshChannel:
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     client.connect(
@@ -59,7 +122,34 @@ def _connect(device: DeviceConnection, password: str) -> paramiko.SSHClient:
         auth_timeout=12,
         banner_timeout=18,
     )
-    return client
+    return SshChannel(client)
+
+
+def _connect_telnet(device: DeviceConnection, password: str) -> TelnetChannel:
+    client = telnetlib.Telnet(device.host, device.port, timeout=12)
+    banner = client.read_until(b":", timeout=8)
+    if _looks_like_username_prompt(banner):
+        client.write((device.username + "\n").encode("utf-8"))
+        client.read_until(b":", timeout=8)
+    elif _looks_like_password_prompt(banner):
+        pass
+    else:
+        client.write((device.username + "\n").encode("utf-8"))
+        client.read_until(b":", timeout=8)
+    client.write((password + "\n").encode("utf-8"))
+    time.sleep(1.0)
+    channel = TelnetChannel(client)
+    channel.read_available()
+    return channel
+
+
+def _looks_like_username_prompt(data: bytes) -> bool:
+    text = data.decode("utf-8", errors="ignore").lower()
+    return "login" in text or "username" in text or "user name" in text
+
+
+def _looks_like_password_prompt(data: bytes) -> bool:
+    return "password" in data.decode("utf-8", errors="ignore").lower()
 
 
 def _commands_for_vendor(vendor: Vendor, enable_password: str | None) -> list[str]:
@@ -84,12 +174,7 @@ def _masked_commands(commands: list[str], enable_password: str | None) -> list[s
     return ["<enable-password>" if command == enable_password else command for command in commands]
 
 
-def _send_command(shell: paramiko.Channel, command: str) -> str:
-    shell.send(command + "\n")
-    return _read_until_idle(shell)
-
-
-def _read_until_idle(shell: paramiko.Channel, idle_seconds: float = 0.9, timeout: float = 45.0) -> str:
+def _read_ssh_until_idle(shell: paramiko.Channel, idle_seconds: float = 0.9, timeout: float = 45.0) -> str:
     deadline = time.time() + timeout
     last_data = time.time()
     chunks: list[str] = []
@@ -103,14 +188,6 @@ def _read_until_idle(shell: paramiko.Channel, idle_seconds: float = 0.9, timeout
         else:
             time.sleep(0.1)
     return "".join(chunks)
-
-
-def _read_available(shell: paramiko.Channel) -> str:
-    chunks: list[str] = []
-    while shell.recv_ready():
-        chunks.append(shell.recv(65535).decode("utf-8", errors="replace"))
-    return "".join(chunks)
-
 
 def _extract_config_text(vendor: Vendor, raw: str) -> str:
     text = raw.replace("\r\n", "\n").replace("\r", "\n")

@@ -96,7 +96,7 @@ function renderDeviceSelectors() {
   const devices = inventoryCache.devices || [];
   $("#global-device").innerHTML = '<option value="">All Devices</option>' + devices.map((device) => `<option value="${escapeHtml(device.device_name)}">${escapeHtml(device.device_name)} (${escapeHtml(device.vendor)})</option>`).join("");
   if (devices.some((device) => device.device_name === selected)) $("#global-device").value = selected;
-  $("#change-device").innerHTML = '<option value="">跟随顶部设备</option>' + devices.map((device) => `<option value="${escapeHtml(device.device_name)}">${escapeHtml(device.device_name)} (${escapeHtml(device.vendor)})</option>`).join("");
+  $("#change-device").innerHTML = '<option value="">Use selected device</option>' + devices.map((device) => `<option value="${escapeHtml(device.device_name)}">${escapeHtml(device.device_name)} (${escapeHtml(device.vendor)})</option>`).join("");
   const vendorLabels = {
     cisco_asa: "Cisco ASA",
     palo_alto: "Palo Alto",
@@ -182,7 +182,7 @@ function renderBars(selector, values) {
           </div>`
         )
         .join("")
-    : '<p>暂无数据</p>';
+    : '<p>No data</p>';
 }
 
 function policyFilterParams() {
@@ -253,19 +253,20 @@ async function loadDevices() {
           (device) => `<tr>
             <td><strong>${escapeHtml(device.name)}</strong><div class="muted">${escapeHtml(device.notes || "")}</div></td>
             <td>${escapeHtml(device.vendor)}</td>
+            <td>${escapeHtml(device.protocol)}</td>
             <td>${escapeHtml(device.host)}:${escapeHtml(device.port)}</td>
             <td>${escapeHtml(device.username)}</td>
             <td><span class="status-badge ${statusClass(device.last_status)}">${escapeHtml(device.last_status || "new")}</span>${device.last_error ? `<div class="muted">${escapeHtml(device.last_error).slice(0, 100)}</div>` : ""}</td>
             <td>${escapeHtml(device.last_fetched_at || "")}</td>
             <td>
-              <button class="secondary row-action" data-action="fill-device" data-id="${device.id}">填入</button>
-              <button class="secondary row-action" data-action="test-device" data-id="${device.id}">测试</button>
-              <button class="primary row-action" data-action="fetch-device" data-id="${device.id}">拉取</button>
+              <button class="secondary row-action" data-action="fill-device" data-id="${device.id}">Fill</button>
+              <button class="secondary row-action" data-action="test-device" data-id="${device.id}">Test</button>
+              <button class="primary row-action" data-action="fetch-device" data-id="${device.id}">Fetch</button>
             </td>
           </tr>`
         )
         .join("")
-    : '<tr><td colspan="7">暂无设备接入配置。</td></tr>';
+    : '<tr><td colspan="8">No device access profiles.</td></tr>';
   $$(".row-action").forEach((button) => {
     button.addEventListener("click", () => handleDeviceRowAction(button.dataset.action, Number(button.dataset.id), devices));
   });
@@ -286,7 +287,7 @@ function deviceFormPayload() {
       vendor: data.vendor,
       host: data.host,
       port: Number(data.port || 22),
-      protocol: "ssh",
+      protocol: data.protocol || "ssh",
       username: data.username,
       enable_password_required: data.enable_password_required === "on",
       notes: data.notes || null,
@@ -305,13 +306,13 @@ async function saveDeviceConnection() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload.connection),
   });
-  $("#device-result").textContent = JSON.stringify({ saved: device, note: "密码未保存，如需测试或拉取请在表单中输入密码。" }, null, 2);
+  $("#device-result").textContent = JSON.stringify({ saved: device, note: "Password was not saved. Enter it in the form when testing or fetching." }, null, 2);
   await loadDevices();
   return { device, credentials: payload.credentials };
 }
 
 async function testDeviceConnection(deviceId, credentials) {
-  if (!credentials.password) throw new Error("请输入设备密码。");
+  if (!credentials.password) throw new Error("Please enter the device password.");
   const result = await api(`/api/device-connections/${deviceId}/test`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -322,7 +323,7 @@ async function testDeviceConnection(deviceId, credentials) {
 }
 
 async function fetchDeviceConfig(deviceId, credentials) {
-  if (!credentials.password) throw new Error("请输入设备密码。");
+  if (!credentials.password) throw new Error("Please enter the device password.");
   const result = await api(`/api/device-connections/${deviceId}/fetch`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -341,12 +342,13 @@ async function handleDeviceRowAction(action, deviceId, devices) {
     const form = $("#device-form");
     form.elements["name"].value = device.name;
     form.elements["vendor"].value = device.vendor;
+    form.elements["protocol"].value = device.protocol || "ssh";
     form.elements["host"].value = device.host;
     form.elements["port"].value = device.port;
     form.elements["username"].value = device.username;
     form.elements["enable_password_required"].checked = Boolean(device.enable_password_required);
     form.elements["notes"].value = device.notes || "";
-    $("#device-result").textContent = "已填入设备信息。密码不会保存，请重新输入后测试或拉取。";
+    $("#device-result").textContent = "Device profile loaded into the form. Passwords are not saved; enter the password again before testing or fetching.";
     return;
   }
   const credentials = deviceFormPayload().credentials;
@@ -374,14 +376,14 @@ async function loadAnalysis() {
                     <span class="severity ${escapeHtml(f.severity)}">${escapeHtml(f.severity)}</span>
                   </div>
                   <p>${escapeHtml(f.detail)}</p>
-                  <p><strong>建议：</strong>${escapeHtml(f.recommendation)}</p>
+                  <p><strong>Recommendation:</strong> ${escapeHtml(f.recommendation)}</p>
                 </article>`
               )
               .join("")}</div>
           </section>`
         )
         .join("")
-    : '<div class="card">暂无风险发现。</div>';
+    : '<div class="card">No risk findings.</div>';
 }
 
 async function loadVisualization() {
@@ -423,7 +425,7 @@ async function loadTopology() {
           </div>`
         )
         .join("")
-    : '<div class="card">暂无拓扑数据。</div>';
+    : '<div class="card">No topology data.</div>';
 }
 
 async function loadDependencies() {
@@ -460,10 +462,10 @@ function renderDependencyObjectResult(result) {
           </article>`
         )
         .join("")
-    : '<article class="mini-card">未找到匹配对象定义，但仍会检查策略里的直接引用。</article>';
+    : '<article class="mini-card">No matching object definition was found, but direct policy references are still checked.</article>';
   const referenceRows = result.references.length
     ? `<div class="table-wrap compact"><table>
-        <thead><tr><th>#</th><th>设备</th><th>策略</th><th>引用字段</th><th>动作</th><th>行号</th></tr></thead>
+        <thead><tr><th>#</th><th>Device</th><th>Policy</th><th>Referenced Field</th><th>Action</th><th>Line</th></tr></thead>
         <tbody>${result.references
           .map(
             (ref, index) => `<tr>
@@ -477,18 +479,18 @@ function renderDependencyObjectResult(result) {
           )
           .join("")}</tbody>
       </table></div>`
-    : '<article class="card">没有发现策略引用。</article>';
+    : '<article class="card">No policy references found.</article>';
   $("#dependency-search-result").innerHTML = `
     <section class="panel">
-      <h2>${escapeHtml(result.query)} 引用情况 <span class="muted">${result.reference_count} policies</span></h2>
+      <h2>${escapeHtml(result.query)} References <span class="muted">${result.reference_count} policies</span></h2>
       <div id="dependency-object-graph" class="dependency-graph"></div>
     </section>
     <section class="panel">
-      <h2>对象定义</h2>
+      <h2>Object Definitions</h2>
       <div class="cards">${objectCards}</div>
     </section>
     <section class="panel">
-      <h2>引用策略</h2>
+      <h2>Referencing Policies</h2>
       ${referenceRows}
     </section>`;
   renderDependencyObjectGraph(result);
@@ -511,24 +513,24 @@ function renderPolicyDependencyResult(result) {
                   </tr>`
                 )
                 .join("")
-            : '<tr><td colspan="6">该策略没有解析到对象引用。</td></tr>';
+            : '<tr><td colspan="6">No object references were parsed for this policy.</td></tr>';
           return `<section class="panel">
             <h2>${escapeHtml(item.policy.rule_name)} <span class="muted">${item.references.length} references</span></h2>
             <div id="policy-object-graph-${index}" class="dependency-graph"></div>
             <div class="table-wrap compact">
               <table>
-                <thead><tr><th>#</th><th>字段</th><th>引用值</th><th>对象名</th><th>有定义</th><th>对象定义</th></tr></thead>
+                <thead><tr><th>#</th><th>Field</th><th>Referenced Value</th><th>Object Name</th><th>Defined</th><th>Object Definition</th></tr></thead>
                 <tbody>${rows}</tbody>
               </table>
             </div>
           </section>`;
         })
         .join("")
-    : '<article class="card">没有找到匹配策略。</article>';
+    : '<article class="card">No matching policy found.</article>';
   $("#policy-dependency-search-result").innerHTML = `
     <article class="card">
-      <div class="card-title"><span>${escapeHtml(result.query)} 策略引用对象</span><span>${result.match_count} matched</span></div>
-      <p>结果按匹配策略逐条展示，不按引用次数排名。</p>
+      <div class="card-title"><span>${escapeHtml(result.query)} Policy Object References</span><span>${result.match_count} matched</span></div>
+      <p>Results are grouped by matching policy, not ranked by reference count.</p>
     </article>
     ${sections}`;
   result.policies.forEach((item, index) => renderPolicyObjectGraph(item, `#policy-object-graph-${index}`));
@@ -546,13 +548,13 @@ function renderDependencyCards(items) {
           </article>`
         )
         .join("")
-    : '<div class="mini-card">暂无数据</div>';
+    : '<div class="mini-card">No data</div>';
 }
 
 function renderDependencyGraph(items) {
   const objects = items.slice(0, 18);
   if (!objects.length) {
-    $("#dependency-graph").innerHTML = '<div class="mini-card">暂无可视化数据</div>';
+    $("#dependency-graph").innerHTML = '<div class="mini-card">No visualization data</div>';
     return;
   }
   const policyMap = new Map();
@@ -618,7 +620,7 @@ function renderDependencyGraph(items) {
 function renderDependencyObjectGraph(result) {
   const refs = result.references.slice(0, 60);
   if (!refs.length) {
-    $("#dependency-object-graph").innerHTML = '<div class="mini-card">该对象暂无引用关系图。</div>';
+    $("#dependency-object-graph").innerHTML = '<div class="mini-card">No reference graph for this object.</div>';
     return;
   }
   const width = 1180;
@@ -657,7 +659,7 @@ function renderDependencyObjectGraph(result) {
 function renderPolicyObjectGraph(item, selector) {
   const refs = item.references.slice(0, 70);
   if (!refs.length) {
-    $(selector).innerHTML = '<div class="mini-card">该策略暂无对象引用图。</div>';
+    $(selector).innerHTML = '<div class="mini-card">No object reference graph for this policy.</div>';
     return;
   }
   const width = 1180;
@@ -741,7 +743,7 @@ async function runPathAnalysis(event) {
         first
           ? `<p><strong>${escapeHtml(first.rule_name)}</strong> / ${escapeHtml(first.action)} / ${escapeHtml(first.device_name)}</p>
              <p>${textList(first.source_zones)} ${textList(first.source_addresses)} <span class="arrow">→</span> ${textList(first.destination_zones)} ${textList(first.destination_addresses)}</p>`
-          : "<p>没有匹配策略。</p>"
+          : "<p>No matching policy.</p>"
       }
     </article>
     <article class="card">
@@ -780,7 +782,7 @@ async function runPolicyPrecheck() {
     action: data.action || "allow",
   };
   if (!payload.source || !payload.destination || !payload.service) {
-    $("#precheck-result").innerHTML = '<article class="card"><div class="card-title"><span>Precheck</span><span class="severity high">missing</span></div><p>请先填写源、目的和服务。</p></article>';
+    $("#precheck-result").innerHTML = '<article class="card"><div class="card-title"><span>Precheck</span><span class="severity high">missing</span></div><p>Please fill in source, destination, and service first.</p></article>';
     return;
   }
   const result = await api("/api/precheck-policy", {
@@ -792,8 +794,8 @@ async function runPolicyPrecheck() {
     <article class="card precheck ${escapeHtml(result.verdict)}">
       <div class="card-title"><span>Precheck: ${escapeHtml(result.verdict)}</span><span>${result.issues.length} issues</span></div>
       <p>${escapeHtml(result.summary)}</p>
-      <p><strong>提交方式：</strong>${escapeHtml(result.deployment.detail)}</p>
-      <p><strong>建议位置：</strong>${escapeHtml(result.placement.detail)}${result.placement.recommended_line ? ` Line ${escapeHtml(result.placement.recommended_line)}` : ""}</p>
+      <p><strong>Deployment:</strong> ${escapeHtml(result.deployment.detail)}</p>
+      <p><strong>Recommended placement:</strong> ${escapeHtml(result.placement.detail)}${result.placement.recommended_line ? ` Line ${escapeHtml(result.placement.recommended_line)}` : ""}</p>
     </article>
     ${result.issues
       .map(
@@ -803,7 +805,7 @@ async function runPolicyPrecheck() {
             <span class="severity ${escapeHtml(issue.severity)}">${escapeHtml(issue.severity)}</span>
           </div>
           <p>${escapeHtml(issue.detail)}</p>
-          <p><strong>建议：</strong>${escapeHtml(issue.recommendation)}</p>
+          <p><strong>Recommendation:</strong> ${escapeHtml(issue.recommendation)}</p>
         </article>`
       )
       .join("")}
@@ -872,6 +874,11 @@ $("#path-form").addEventListener("submit", runPathAnalysis);
 $("#dependency-search-form").addEventListener("submit", (event) => runDependencyObjectSearch(event).catch((error) => alert(error.message)));
 $("#policy-dependency-search-form").addEventListener("submit", (event) => runPolicyDependencySearch(event).catch((error) => alert(error.message)));
 $("#precheck-btn").addEventListener("click", () => runPolicyPrecheck().catch((error) => alert(error.message)));
+$("#device-form").elements["protocol"].addEventListener("change", (event) => {
+  const port = $("#device-form").elements["port"];
+  if (event.target.value === "telnet" && (!port.value || port.value === "22")) port.value = "23";
+  if (event.target.value === "ssh" && (!port.value || port.value === "23")) port.value = "22";
+});
 
 $("#device-form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -929,8 +936,8 @@ $("#change-form").addEventListener("submit", async (event) => {
     $("#precheck-result").insertAdjacentHTML(
       "afterbegin",
       `<article class="card">
-        <div class="card-title"><span>提交结果</span><span>#${escapeHtml(created.id)}</span></div>
-        <p>申请已保存，不会直接下发设备。建议位置：${escapeHtml(precheck.placement.detail)}${precheck.placement.recommended_line ? ` Line ${escapeHtml(precheck.placement.recommended_line)}` : ""}</p>
+        <div class="card-title"><span>Submit Result</span><span>#${escapeHtml(created.id)}</span></div>
+        <p>The request was saved and will not be pushed to the device automatically. Recommended placement: ${escapeHtml(precheck.placement.detail)}${precheck.placement.recommended_line ? ` Line ${escapeHtml(precheck.placement.recommended_line)}` : ""}</p>
       </article>`
     );
   }

@@ -54,10 +54,10 @@ def analyze_policies(policies: list[PolicyRule]) -> list[AnalysisFinding]:
                 AnalysisFinding(
                     severity="critical",
                     category="over-permissive",
-                    title="Any-Any 放行策略",
-                    detail=f"{policy.rule_name} 允许任意源到任意目的的任意服务。",
+                    title="Any-Any Allow Rule",
+                    detail=f"{policy.rule_name} allows any source to any destination with any service.",
                     policy_ids=[policy.id],
-                    recommendation="拆分为明确的源、目的和服务范围，并增加业务责任人与到期时间。",
+                    recommendation="Split it into explicit source, destination, and service scopes, and add owner and expiration metadata.",
                 )
             )
         elif is_allow and (src_any or dst_any or svc_any):
@@ -65,10 +65,10 @@ def analyze_policies(policies: list[PolicyRule]) -> list[AnalysisFinding]:
                 AnalysisFinding(
                     severity="high",
                     category="broad-scope",
-                    title="策略范围过宽",
-                    detail=f"{policy.rule_name} 包含 {'源Any' if src_any else ''} {'目的Any' if dst_any else ''} {'服务Any' if svc_any else ''}。",
+                    title="Overly Broad Rule Scope",
+                    detail=f"{policy.rule_name} includes {'source any' if src_any else ''} {'destination any' if dst_any else ''} {'service any' if svc_any else ''}.",
                     policy_ids=[policy.id],
-                    recommendation="按最小权限原则收敛地址和服务对象。",
+                    recommendation="Narrow address and service objects according to least privilege.",
                 )
             )
 
@@ -79,10 +79,10 @@ def analyze_policies(policies: list[PolicyRule]) -> list[AnalysisFinding]:
                 AnalysisFinding(
                     severity="high",
                     category="dangerous-service",
-                    title="高危服务暴露",
-                    detail=f"{policy.rule_name} 放行 {', '.join(dangerous)}，且地址范围较宽。",
+                    title="High-Risk Service Exposure",
+                    detail=f"{policy.rule_name} allows {', '.join(dangerous)} with a broad address scope.",
                     policy_ids=[policy.id],
-                    recommendation="限制管理端口来源，优先使用堡垒机、VPN 或专用管理网段。",
+                    recommendation="Restrict management-port sources and prefer a bastion host, VPN, or dedicated management segment.",
                 )
             )
         if is_allow and dangerous_apps:
@@ -90,10 +90,10 @@ def analyze_policies(policies: list[PolicyRule]) -> list[AnalysisFinding]:
                 AnalysisFinding(
                     severity="medium" if not (src_any or dst_any) else "high",
                     category="dangerous-application",
-                    title="高危应用放行",
-                    detail=f"{policy.rule_name} 放行 {', '.join(dangerous_apps)}。",
+                    title="High-Risk Application Allowed",
+                    detail=f"{policy.rule_name} allows {', '.join(dangerous_apps)}.",
                     policy_ids=[policy.id],
-                    recommendation="确认业务必要性，限制来源、目的和用户范围，并开启日志审计。",
+                    recommendation="Confirm the business need, restrict source, destination, and user scope, and enable logging.",
                 )
             )
 
@@ -102,10 +102,10 @@ def analyze_policies(policies: list[PolicyRule]) -> list[AnalysisFinding]:
                 AnalysisFinding(
                     severity="medium",
                     category="cross-zone",
-                    title="跨区域访问风险",
-                    detail=f"{policy.rule_name} 从 {', '.join(policy.source_zones or ['any'])} 到 {', '.join(policy.destination_zones or ['any'])}。",
+                    title="Cross-Zone Access Risk",
+                    detail=f"{policy.rule_name} goes from {', '.join(policy.source_zones or ['any'])} to {', '.join(policy.destination_zones or ['any'])}.",
                     policy_ids=[policy.id],
-                    recommendation="确认区域边界是否符合业务流向，必要时拆分为更明确的区域对。",
+                    recommendation="Verify that the zone boundary matches the business flow; split into more explicit zone pairs if needed.",
                 )
             )
 
@@ -114,10 +114,10 @@ def analyze_policies(policies: list[PolicyRule]) -> list[AnalysisFinding]:
                 AnalysisFinding(
                     severity="low",
                     category="least-privilege",
-                    title="最小权限优化建议",
-                    detail=f"{policy.rule_name} 同时包含多个源、目的或服务。",
+                    title="Least-Privilege Optimization",
+                    detail=f"{policy.rule_name} contains multiple sources, destinations, or services.",
                     policy_ids=[policy.id],
-                    recommendation="按业务系统、端口或访问方向拆分策略，便于复核、到期和命中分析。",
+                    recommendation="Split by application, port, or traffic direction to simplify review, expiration, and hit analysis.",
                 )
             )
 
@@ -126,10 +126,10 @@ def analyze_policies(policies: list[PolicyRule]) -> list[AnalysisFinding]:
                 AnalysisFinding(
                     severity="medium",
                     category="unused",
-                    title="未命中策略",
-                    detail=f"{policy.rule_name} 当前命中次数为 0。",
+                    title="Unused Rule",
+                    detail=f"{policy.rule_name} currently has 0 hits.",
                     policy_ids=[policy.id],
-                    recommendation="结合观察期确认后禁用或删除。",
+                    recommendation="Confirm over an observation period, then disable or remove it.",
                 )
             )
 
@@ -208,10 +208,10 @@ def _duplicate_findings(policies: list[PolicyRule]) -> list[AnalysisFinding]:
                 AnalysisFinding(
                     severity="medium",
                     category="duplicate",
-                    title="重复策略",
-                    detail="、".join(p.rule_name for p in group) + " 的匹配条件和动作相同。",
+                    title="Duplicate Rules",
+                    detail=", ".join(p.rule_name for p in group) + " have the same match conditions and action.",
                     policy_ids=[p.id for p in group],
-                    recommendation="保留一条规范策略，合并说明、标签和责任人后删除重复项。",
+                    recommendation="Keep one canonical rule, merge descriptions, tags, and owner metadata, then remove duplicates.",
                 )
             )
     return findings
@@ -242,10 +242,10 @@ def _conflict_findings(policies: list[PolicyRule]) -> list[AnalysisFinding]:
                 AnalysisFinding(
                     severity="high",
                     category="conflict",
-                    title="冲突策略",
-                    detail="、".join(p.rule_name for p in group) + " 匹配条件相同但动作不同。",
+                    title="Conflicting Rules",
+                    detail=", ".join(p.rule_name for p in group) + " have the same match conditions but different actions.",
                     policy_ids=[p.id for p in group],
-                    recommendation="确认业务预期动作，保留一个明确结果，并调整规则顺序或删除冲突项。",
+                    recommendation="Confirm the expected business action, keep one clear result, and adjust rule order or remove conflicts.",
                 )
             )
     return findings
@@ -275,10 +275,10 @@ def _merge_findings(policies: list[PolicyRule]) -> list[AnalysisFinding]:
                 AnalysisFinding(
                     severity="low",
                     category="merge-suggestion",
-                    title="策略合并建议",
-                    detail="、".join(p.rule_name for p in group[:6]) + (" 等" if len(group) > 6 else "") + " 仅服务不同。",
+                    title="Rule Merge Suggestion",
+                    detail=", ".join(p.rule_name for p in group[:6]) + (" and others" if len(group) > 6 else "") + " differ only by service.",
                     policy_ids=[p.id for p in group],
-                    recommendation="如属于同一业务，可合并为服务组策略；如生命周期不同，保留拆分。",
+                    recommendation="If they belong to the same application, merge them into a service-group rule; keep them split if lifecycles differ.",
                 )
             )
     return findings[:25]
@@ -293,10 +293,10 @@ def _shadow_findings(policies: list[PolicyRule]) -> list[AnalysisFinding]:
                     AnalysisFinding(
                         severity="high",
                         category="shadowed",
-                        title="疑似遮挡策略",
-                        detail=f"{earlier.rule_name} 位于前面且范围覆盖 {later.rule_name}，两者动作不同。",
+                        title="Possible Shadowed Rule",
+                        detail=f"{earlier.rule_name} appears earlier and covers {later.rule_name}, while the actions differ.",
                         policy_ids=[earlier.id, later.id],
-                        recommendation="检查策略顺序，确认后移动、收敛或删除被遮挡策略。",
+                        recommendation="Review rule order, then move, narrow, or remove the shadowed rule as appropriate.",
                     )
                 )
     return findings

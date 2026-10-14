@@ -1,129 +1,127 @@
 # Firewall Policy Tools
 
-基于 Web 的防火墙策略管理工具，当前支持 Cisco ASA、Palo Alto、Fortinet 和 Huawei 配置导入解析、统一查询、对象查看、风险分析、策略申请和审计记录。
+A web-based firewall policy management tool. It currently supports importing and parsing configurations from Cisco ASA, Palo Alto, Fortinet, and Huawei devices, with unified policy search, object inventory, risk analysis, policy change requests, and audit logs.
 
-## 功能概览
+## Features
 
-- 多厂商配置导入：Cisco ASA、Palo Alto、Fortinet、Huawei
-- 多设备树型目录：按厂商、设备分类查看
-- 策略查询：源、目的、端口/服务、应用、用户、区域/ACL、动作、关键字
-- 对象查询：地址对象、服务对象、对象组
-- 策略可视化：路径分析、矩阵视图、拓扑视图、依赖关系图、规则顺序视图
-- 策略分析：冲突、重复、遮挡/永不命中、过宽策略、高危端口/应用、跨区域风险
-- 变更预检查：新增策略前检查冲突、重叠、互斥和推荐插入位置
-- 设备接入：通过 GUI 添加设备管理 IP，使用 SSH 测试连接并拉取 running-config 自动导入
-- 本地持久化：SQLite 数据库存储导入结果和变更记录
+- Multi-vendor configuration import: Cisco ASA, Palo Alto, Fortinet, Huawei
+- Multi-device tree navigation grouped by vendor and device
+- Policy search by source, destination, port/service, application, user, zone/ACL, action, and keyword
+- Object inventory for address objects, service objects, and object groups
+- Policy visualization: path analysis, matrix view, topology view, dependency graph, and rule order view
+- Policy analysis: conflicts, duplicates, shadowed or never-hit rules, overly broad rules, risky ports/applications, and cross-zone risk
+- Change precheck: detects conflicts, overlap, mutual exclusion, and recommends placement before adding a policy
+- Device access: add a management IP in the GUI, test SSH/Telnet connectivity, fetch running configuration, and import it automatically
+- Local persistence: imported results and request records are stored in SQLite
 
-## Docker 安装
+## Docker Installation
 
-从 GitHub 拉取代码：
+Clone the repository:
 
 ```bash
 git clone https://github.com/boxie283555/FireWall-Policy-tools.git FireWall-Policy-tools
 cd FireWall-Policy-tools
 ```
 
-启动服务：
+Start the service:
 
 ```bash
 docker compose up -d --build
 ```
 
-访问：
+Open:
 
 ```text
-http://192.168.20.169:8080
+http://127.0.0.1:8080
 ```
 
-查看日志：
+View logs:
 
 ```bash
 docker compose logs -f
 ```
 
-停止服务：
+Stop the service:
 
 ```bash
 docker compose down
 ```
 
-数据保存在本地 `data/` 目录，默认不会提交到 Git。
+Imported data is stored in the local `data/` directory and is not committed to Git.
 
-## 本机安装
+## Local Python Installation
 
-适合在自己的电脑上运行和调试。以下命令适用于 macOS / Linux 终端。
+Use this option for local development or debugging. The commands below work on macOS and Linux.
 
-### 1. 安装前准备
+### 1. Prerequisites
 
-确认本机已经安装：
+Make sure these are installed:
 
-- Python 3.10 或以上版本
+- Python 3.10 or later
 - Git
 
-检查命令：
+Check versions:
 
 ```bash
 python3 --version
 git --version
 ```
 
-### 2. 下载代码
+### 2. Clone the Code
 
 ```bash
 git clone https://github.com/boxie283555/FireWall-Policy-tools.git
 cd FireWall-Policy-tools
 ```
 
-### 3. 创建 Python 虚拟环境
+### 3. Create a Python Virtual Environment
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-激活成功后，终端前面通常会出现 `(.venv)`。
+After activation, the terminal prompt usually starts with `(.venv)`.
 
-### 4. 安装依赖
+### 4. Install Dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 5. 启动服务
+### 5. Start the Service
 
 ```bash
 uvicorn app.main:app --host 127.0.0.1 --port 8080
 ```
 
-访问：
+Open:
 
 ```text
 http://127.0.0.1:8080
 ```
 
-如果希望同一局域网里的其他机器也能访问，把启动命令改成：
+To allow other machines on the same LAN to access it, start with:
 
 ```bash
 uvicorn app.main:app --host 0.0.0.0 --port 8080
 ```
 
-然后使用本机 IP 访问，例如：
+Then open:
 
 ```text
-http://本机IP:8080
+http://<your-mac-ip>:8080
 ```
 
-### 6. 停止服务
+### 6. Stop the Service
 
-在运行 `uvicorn` 的终端窗口按：
+Press this in the terminal running `uvicorn`:
 
 ```text
 Ctrl + C
 ```
 
-### 7. 下次启动
-
-进入项目目录，激活虚拟环境后启动：
+### 7. Start Again Later
 
 ```bash
 cd FireWall-Policy-tools
@@ -131,7 +129,7 @@ source .venv/bin/activate
 uvicorn app.main:app --host 127.0.0.1 --port 8080
 ```
 
-### 8. 更新代码
+### 8. Update the Code
 
 ```bash
 cd FireWall-Policy-tools
@@ -141,11 +139,11 @@ pip install -r requirements.txt
 uvicorn app.main:app --host 127.0.0.1 --port 8080
 ```
 
-导入后的数据保存在 `data/` 目录里，更新代码不会自动删除。
+Imported data remains in `data/`; code updates do not remove it automatically.
 
-## 部署到 192.168.20.169
+## Deploy to 192.168.20.169
 
-在 `192.168.20.169` 上安装 Docker 和 Docker Compose 后，推荐直接从 GitHub 拉取并启动：
+After Docker and Docker Compose are installed on `192.168.20.169`, clone and start the service:
 
 ```bash
 ssh 192.168.20.169
@@ -154,7 +152,7 @@ cd /opt/firewall-policy-tools
 docker compose up -d --build
 ```
 
-如服务器已经有旧版本，更新方式：
+To update an existing deployment:
 
 ```bash
 cd /opt/firewall-policy-tools
@@ -162,49 +160,49 @@ git pull
 docker compose up -d --build
 ```
 
-服务默认监听 `8080` 端口。
+The service listens on port `8080` by default.
 
-也可以从当前机器用脚本上传部署：
+You can also deploy from your current machine with the helper script:
 
 ```bash
 chmod +x scripts/deploy.sh
 ./scripts/deploy.sh 192.168.20.169 /opt/firewall-policy-tools
 ```
 
-## 使用方式
+## Usage
 
-1. 打开 `http://192.168.20.169:8080`
-2. 进入 `Import Config`
-3. 选择厂商和设备名，上传或粘贴配置
-4. 也可以进入 `Device Access`，录入设备 IP、端口、用户名和临时密码，通过 SSH 拉取配置并自动导入
-5. 进入 `Access Rules` 查询策略
-6. 进入 `Objects` 查询对象
-7. 进入 `Path / Topology` 查看路径、矩阵、拓扑、依赖关系和规则顺序
-8. 进入 `Risk Findings` 查看风险分析结果
-9. 进入 `Change Requests` 做新增策略预检查
+1. Open `http://127.0.0.1:8080` or `http://192.168.20.169:8080`.
+2. Go to `Import Config`.
+3. Select vendor and device name, then upload or paste a configuration.
+4. Or go to `Device Access`, enter device IP, protocol, port, username, and a temporary password, then fetch the configuration directly.
+5. Go to `Access Rules` to search policies.
+6. Go to `Objects` to search objects.
+7. Go to `Path / Topology` to view path analysis, matrix, topology, dependency graph, and rule order.
+8. Go to `Risk Findings` to review analysis results.
+9. Go to `Change Requests` to run precheck before adding a policy.
 
-## 设备接入说明
+## Device Access
 
-`Device Access` 页面用于从防火墙直接拉取配置：
+The `Device Access` page fetches configuration directly from firewalls:
 
-- 支持厂商：Cisco ASA、Palo Alto、Fortinet、Huawei
-- 当前协议：SSH
-- 保存内容：设备名、厂商、管理 IP、端口、用户名、备注
-- 不保存内容：密码、Enable 密码、Token
-- 拉取成功后会使用现有解析器自动导入策略和对象
+- Vendors: Cisco ASA, Palo Alto, Fortinet, Huawei
+- Protocols: SSH and Telnet
+- Saved fields: device name, vendor, management IP, protocol, port, username, notes
+- Not saved: password, enable password, token
+- A successful fetch is parsed and imported automatically
 
-各厂商默认执行命令：
+Default commands by vendor:
 
-- Cisco ASA：`terminal pager 0`、`show running-config`
-- Palo Alto：`set cli pager off`、`set cli config-output-format set`、`configure`、`show`
-- Fortinet：`config system console`、`set output standard`、`end`、`show full-configuration`
-- Huawei：`screen-length 0 temporary`、`display current-configuration`
+- Cisco ASA: `terminal pager 0`, `show running-config`
+- Palo Alto: `set cli pager off`, `set cli config-output-format set`, `configure`, `show`
+- Fortinet: `config system console`, `set output standard`, `end`, `show full-configuration`
+- Huawei: `screen-length 0 temporary`, `display current-configuration`
 
-如果 Cisco ASA 需要进入 enable 模式，请勾选 `Cisco ASA 需要 enable`，并在拉取时填写 Enable 密码。
+If Cisco ASA requires enable mode, select `Cisco ASA requires enable mode` and enter the enable password when testing or fetching.
 
-## GitHub 推送
+## GitHub Push
 
-首次推送到 GitHub：
+First-time push to GitHub:
 
 ```bash
 git remote add origin https://github.com/boxie283555/FireWall-Policy-tools.git
