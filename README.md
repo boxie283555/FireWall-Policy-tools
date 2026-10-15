@@ -221,3 +221,11 @@ git remote add origin https://github.com/boxie283555/FireWall-Policy-tools.git
 git branch -M main
 git push -u origin main
 ```
+
+## Risk Remediation
+
+Risk Findings uses a collapsible tree: security policy or NAT → risk category → individual finding. Expand a finding to inspect its rules, start a remediation ticket, or generate candidate commands. Tickets store the owner, editable plan, command and rollback text, status, and original rule snapshots in SQLite; creation and updates appear in the audit log. Tickets remain available after configuration reimports.
+
+Command generation currently supports PAN-OS local security/NAT rules and FortiGate firewall policies: disable a selected rule or replace its complete source, destination, or service scope. Confirm the correct vsys/VDOM and enter existing object names, one per line. The generator includes rollback commands and does not execute anything. PAN-OS commit is left to the reviewer. ASA, Huawei, Panorama pre/post rules, and FortiGate NAT require a manually reviewed command plan and display an explicit unsupported-context message. Saved workflow statuses are manual records; they do not imply device execution or automatic risk verification.
+
+Template references: [PAN-OS CLI](https://docs.paloaltonetworks.com/ngfw/pan-os-cli-quick-start/cli-command-hierarchy/pan-os-11-1-configure-cli-command-hierarchy), [FortiGate policy](https://docs.fortinet.com/document/fortigate/7.6.3/administration-guide/656084/firewall-policy).

@@ -31,7 +31,7 @@ class ApiError extends Error {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(path, options);
+  const response = await fetch(path, { ...options, cache: "no-store" });
   if (!response.ok) {
     const text = await response.text();
     let detail = text;
@@ -473,35 +473,103 @@ function errorResult(error) {
   return { status: "error", error: error.message || String(error) };
 }
 
+const remediationSteps = {
+  "over-permissive": ["Confirm the required business flows with the owner; record exact source, destination and ports.", "Create explicit address/service objects and replacement rules; validate required and denied flows before retiring the Any-Any rule."],
+  "broad-scope": ["Identify which any source, destination or service fields are required using traffic logs.", "Replace broad fields with approved hosts, subnets and services; retain exceptions only with an owner and review date."],
+  "dangerous-service": ["Confirm the exposed management/database ports and approved clients.", "Limit sources to the bastion, VPN or management subnet; remove unneeded ports and verify unauthorized clients are denied."],
+  "dangerous-application": ["Confirm the application's business owner, clients and servers.", "Restrict applications, users and address scope; enable session logging and review allowed and blocked traffic."],
+  "cross-zone": ["Confirm the intended trust-boundary crossing and traffic direction.", "Split access into explicit zone pairs and required services; test both forward and return traffic."],
+  "least-privilege": ["Map each source/destination/service combination to an approved business flow.", "Split unrelated flows into separately owned rules without creating additional allowed combinations."],
+  unused: ["Check hit-counter reset time and observe a representative business cycle, including periodic jobs.", "After owner approval, disable the rule during a change window; monitor failures before permanently removing it."],
+  duplicate: ["Compare rule order, logging, schedules, objects and business ownership on the device.", "Keep the approved canonical rule, preserve metadata and disable redundant rules; remove them after observation."],
+  conflict: ["Confirm the expected allow/deny result with the owner and inspect first-match rule order.", "Narrow or reorder the conflicting rules to express that decision; test an allowed flow and a denied flow."],
+  shadowed: ["Compare the earlier covering rule with the later rule, including resolved objects and schedules.", "Narrow the earlier rule or reposition the intended exception after approval; verify first-match behavior."],
+  "merge-suggestion": ["Confirm that the rules share an application, owner, schedule and expiration.", "Combine only the required services into a service group; compare permitted traffic before disabling the old rules."],
+  "broad-nat": ["Confirm whether this is an intentional catch-all translation and inspect rule precedence.", "Limit original sources and destinations to approved networks; test translation and return traffic."],
+  "broad-service-nat": ["List the published services and their original and translated ports.", "Limit destination/static NAT to those services and align the security policy; test required and blocked ports."],
+  "public-inbound-nat": ["Confirm the published destination and approved external client networks.", "Restrict sources in both NAT and security policy; verify external access, translation and return traffic."],
+  "duplicate-nat": ["Compare match conditions, translation, interfaces and precedence on the device.", "Keep the canonical NAT rule and disable duplicates after approval; test new sessions and reverse translation."],
+};
+
+function riskSteps(finding) {
+  if (finding.category === "lifecycle") {
+    if (finding.title === "Expired Rule Still Enabled") return ["Ask the owner whether access is still required and record approval for any renewal.", "Disable expired access or renew its expiration after approval; verify required traffic and review the next expiration date."];
+    if (finding.title === "Rule Expiring Soon") return ["Contact the owner before the displayed expiration date and confirm continued business need.", "Record an approved renewal or schedule removal; verify access at the change window."];
+    return ["Confirm why the rule was disabled and the required retention period.", "After owner approval and backup, remove stale disabled rules and confirm no dependencies remain."];
+  }
+  if (finding.category === "governance") return finding.title === "Rule Owner Missing"
+    ? ["Identify the accountable business owner and confirm the purpose of this access.", "Add owner metadata to the device rule description/tag or linked change record; reimport and verify the finding clears."]
+    : ["Confirm whether access is temporary or permanent with the owner.", "Add an approved expiration for temporary access, or document permanent access and its review date; reimport the updated configuration."];
+  return remediationSteps[finding.category] || [finding.recommendation];
+}
+
+let riskRows = [];
+let riskRules = [];
+let remediationTickets = [];
+let activeRemediation = null;
+
 async function loadAnalysis() {
-  const [findings, summary] = await Promise.all([api(`/api/analysis?${paramsFrom({})}`), api(`/api/report/summary?${paramsFrom({})}`)]);
+  const params = paramsFrom({}).toString();
+  const [findings, summary, natFindings, policies, natRules] = await Promise.all([
+    api(`/api/analysis?${params}`), api(`/api/report/summary?${params}`),
+    api(`/api/nat-analysis?${params}`), api(`/api/policies?${params}`), api(`/api/nat-rules?${params}`),
+  ]);
   renderRiskSummary(summary);
-  const grouped = findings.reduce((acc, finding) => {
-    acc[finding.category] = acc[finding.category] || [];
-    acc[finding.category].push(finding);
-    return acc;
-  }, {});
-  $("#finding-list").innerHTML = Object.keys(grouped).length
-    ? Object.entries(grouped)
-        .map(
-          ([category, items]) => `<section class="panel">
-            <h2>${escapeHtml(category)} <span class="muted">${items.length}</span></h2>
-            <div class="cards">${items
-              .map(
-                (f) => `<article class="card finding">
-                  <div class="card-title">
-                    <span>${escapeHtml(f.title)}</span>
-                    <span class="severity ${escapeHtml(f.severity)}">${escapeHtml(f.severity)}</span>
-                  </div>
-                  <p>${escapeHtml(f.detail)}</p>
-                  <p><strong>Recommendation:</strong> ${escapeHtml(f.recommendation)}</p>
-                </article>`
-              )
-              .join("")}</div>
-          </section>`
-        )
-        .join("")
-    : '<div class="card">No risk findings.</div>';
+  const rows = [...findings.map(f => ({ ...f, kind: "policy" })), ...natFindings.map(f => ({ ...f, kind: "nat" }))];
+  const rank = { critical: 0, high: 1, medium: 2, low: 3 };
+  rows.sort((a, b) => (rank[a.severity] ?? 9) - (rank[b.severity] ?? 9));
+  riskRows = rows;
+  riskRules = [...policies.map(r => ({...r, kind: "policy"})), ...natRules.map(r => ({...r, kind: "nat"}))];
+  const related = f => {
+    const ids = new Set(f.policy_ids || f.rule_ids || []);
+    return (f.kind === "nat" ? natRules : policies).filter(rule => ids.has(rule.id));
+  };
+  const rendered = rows.map((f, index) => {
+    const rules = related(f);
+    return `<details class="panel finding risk-leaf"><summary>${escapeHtml(f.title)} <span class="severity ${escapeHtml(f.severity)}">${escapeHtml(f.severity)}</span></summary><div>
+      <div class="card-title"><strong>${escapeHtml(f.title)}</strong><span class="severity ${escapeHtml(f.severity)}">${escapeHtml(f.severity)}</span></div>
+      <p class="muted">${escapeHtml(f.kind.toUpperCase())} · ${escapeHtml(f.category)}</p>
+      <p>${escapeHtml(f.detail)}</p>
+      <p><strong>Recommended improvement:</strong> ${escapeHtml(f.recommendation)}</p>
+      <ol>${riskSteps(f).map(step => `<li>${escapeHtml(step)}</li>`).join("")}
+        <li>Back up the configuration and record rollback steps before the change. After implementation, reimport the configuration and rerun the risk review.</li></ol>
+      <div class="form-actions"><button class="primary risk-start" data-index="${index}" type="button">Start Remediation</button><button class="secondary risk-command" data-index="${index}" type="button">Generate Commands</button><button class="secondary risk-download" data-index="${index}" type="button">Download Remediation Plan</button></div>
+      <details class="risk-rules"><summary>Inspect affected rules (${rules.length})</summary>
+        ${rules.length ? rules.map(rule => `<div class="mini-card"><strong>${escapeHtml(rule.device_name)} / ${escapeHtml(rule.rule_name)}</strong>
+          <span>${escapeHtml(rule.vendor)} · ID: ${escapeHtml(rule.id)} · Line: ${escapeHtml(rule.line_no ?? "unknown")} · ${rule.enabled ? "Enabled" : "Disabled"}</span>
+          <pre>${escapeHtml(JSON.stringify(Object.fromEntries(Object.entries(rule).filter(([key]) => key !== "raw")), null, 2))}</pre>
+          <details><summary>Original configuration</summary><pre>${escapeHtml(rule.raw || "Original configuration unavailable.")}</pre></details></div>`).join("") : "<p>Associated rules are unavailable in the current inventory. Refresh or reimport before planning changes.</p>"}
+      </details></div></details>`;
+  });
+  const categoryLabels = { "over-permissive": "Any-Any Access", "broad-scope": "Broad Access Scope", "dangerous-service": "High-Risk Services", "dangerous-application": "High-Risk Applications", "cross-zone": "Zone Boundaries", "least-privilege": "Least Privilege", unused: "Unused Rules", duplicate: "Duplicate Rules", conflict: "Conflicting Rules", shadowed: "Shadowed Rules", "merge-suggestion": "Merge Opportunities", lifecycle: "Rule Lifecycle", governance: "Ownership & Expiration", "broad-nat": "Broad NAT Match", "broad-service-nat": "Broad NAT Services", "public-inbound-nat": "Inbound NAT Exposure", "duplicate-nat": "Duplicate NAT" };
+  $("#finding-list").innerHTML = rows.length ? ["policy", "nat"].map(kind => {
+    const categories = [...new Set(rows.filter(f => f.kind === kind).map(f => f.category))];
+    const count = rows.filter(f => f.kind === kind).length;
+    if (!count) return "";
+    return `<details class="risk-branch panel" open><summary>${kind === "policy" ? "Security Policy Risks" : "NAT Risks"} (${count})</summary>${categories.map(category => {
+      const indexes = rows.map((f, i) => f.kind === kind && f.category === category ? i : -1).filter(i => i >= 0);
+      return `<details class="risk-branch"><summary>${escapeHtml(categoryLabels[category] || category)} (${indexes.length})</summary>${indexes.map(i => rendered[i]).join("")}</details>`;
+    }).join("")}</details>`;
+  }).join("") : '<div class="card">No risk findings.</div>';
+  $$(".risk-start, .risk-command").forEach(button => button.addEventListener("click", () => {
+    openRemediation(rows[Number(button.dataset.index)]);
+    if (button.classList.contains("risk-command")) $("#remediation-operation").focus();
+  }));
+  await loadRemediations();
+  $$(".risk-download").forEach(button => button.addEventListener("click", () => {
+    const finding = rows[Number(button.dataset.index)];
+    const plan = [finding.title, `Severity: ${finding.severity} | Type: ${finding.kind} | Category: ${finding.category}`,
+      finding.detail, `Recommendation: ${finding.recommendation}`, "", "Implementation steps:",
+      ...riskSteps(finding).map((step, i) => `${i + 1}. ${step}`),
+      "", "Before implementation: obtain approval, back up configuration and record rollback steps.",
+      "Validation: test approved and denied flows, monitor logs, reimport configuration and rerun risk analysis.",
+      "Rollback: restore the backed-up rule configuration and order if validation fails.",
+      "", "Affected rules:", ...related(finding).map(rule => JSON.stringify(rule, null, 2))].join("\n");
+    const url = URL.createObjectURL(new Blob([plan], { type: "text/plain;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url; link.download = `remediation-${finding.kind}-${finding.category}.txt`; link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }));
 }
 
 function renderRiskSummary(summary) {
@@ -1050,7 +1118,7 @@ $$(".tab").forEach((button) =>
   })
 );
 
-$("#refresh-btn").addEventListener("click", () => loadView());
+$("#refresh-btn").addEventListener("click", () => loadInventory().then(() => loadView()).catch(error => alert(error.message)));
 $("#global-vendor").addEventListener("change", () => {
   $("#global-device").value = "";
   loadInventory().then(() => loadView());
@@ -1166,3 +1234,66 @@ $("#change-form").addEventListener("submit", async (event) => {
 });
 
 loadInventory().then(loadDashboard);
+
+
+async function loadRemediations() {
+  remediationTickets = await api("/api/remediations");
+  const filtered = remediationTickets.filter(t => t.rule_snapshots.some(r => (!globalVendor() || r.vendor === globalVendor() || globalVendor() === "fortinet" && r.vendor === "fortigate") && (!globalDevice() || r.device_name === globalDevice())));
+  $("#remediation-list").innerHTML = filtered.length ? filtered.map(t => `<article class="card"><div class="card-title"><strong>#${t.id} ${escapeHtml(t.title)}</strong><span>${escapeHtml(t.status)}</span></div><p>Owner: ${escapeHtml(t.owner)} · ${escapeHtml(t.kind)} / ${escapeHtml(t.category)}</p><p>${escapeHtml(t.plan)}</p><button type="button" class="secondary remediation-edit" data-id="${t.id}">Edit / Track Remediation</button></article>`).join("") : '<p class="muted">No remediation tickets in the selected device scope.</p>';
+  $$(".remediation-edit").forEach(button => button.addEventListener("click", () => openRemediation(null, remediationTickets.find(t => t.id === Number(button.dataset.id)))));
+}
+
+function openRemediation(finding, ticket = null) {
+  const form = $("#remediation-form");
+  form.reset();
+  activeRemediation = ticket || { kind: finding.kind, category: finding.category, rule_ids: finding.policy_ids || finding.rule_ids || [] };
+  const snapshots = ticket ? ticket.rule_snapshots : riskRules.filter(r => r.kind === finding.kind && activeRemediation.rule_ids.includes(r.id));
+  activeRemediation = { ...activeRemediation, rule_snapshots: snapshots };
+  for (const key of ["title", "owner", "status", "plan", "commands", "rollback"]) form.elements[key].value = ticket?.[key] || (key === "status" ? "draft" : "");
+  if (!ticket) {
+    form.elements.title.value = finding.title;
+    form.elements.plan.value = [finding.detail, finding.recommendation, ...riskSteps(finding).map((step, i) => `${i + 1}. ${step}`), "Validation: test approved and denied flows, reimport configuration, rerun risk analysis."].join("\n");
+    form.elements.rollback.value = "Back up the live configuration and rule order before implementation. Restore them if validation fails.";
+  }
+  $("#remediation-rule").innerHTML = snapshots.map(r => `<option value="${escapeHtml(r.id)}">${escapeHtml(r.device_name)} / ${escapeHtml(r.rule_name)} (line ${escapeHtml(r.line_no ?? "unknown")})</option>`).join("");
+  $("#remediation-feedback").textContent = "";
+  $("#remediation-notes").textContent = "Command generation supports PAN-OS local policy/NAT and FortiGate security policy. Other contexts require a manually reviewed command plan. Each generation targets only the selected rule.";
+  $("#remediation-dialog").showModal();
+}
+
+$("#risk-expand").addEventListener("click", () => $$("#finding-list .risk-branch, #finding-list .risk-leaf").forEach(el => el.open = true));
+$("#risk-collapse").addEventListener("click", () => $$("#finding-list details").forEach(el => el.open = false));
+$("#risk-tickets").addEventListener("click", () => $("#remediation-list").scrollIntoView({ behavior: "smooth" }));
+$("#remediation-close").addEventListener("click", () => $("#remediation-dialog").close());
+$("#remediation-generate").addEventListener("click", async () => {
+  const button = $("#remediation-generate"); button.disabled = true;
+  try {
+    const result = await api("/api/remediation-commands", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({
+      kind: activeRemediation.kind, rule_id: $("#remediation-rule").value, operation: $("#remediation-operation").value,
+      values: $("#remediation-values").value.split("\n").map(v => v.trim()).filter(Boolean), context: $("#remediation-context").value,
+    }) });
+    const form = $("#remediation-form");
+    form.elements.commands.value = `# Device: ${JSON.stringify(result.device_name)} | Rule ID: ${result.rule_id} | Operation: ${result.operation}\n${result.notes.map(n => `# ${n}`).join("\n")}\n${result.commands}`;
+    form.elements.rollback.value = result.rollback;
+    $("#remediation-notes").textContent = result.notes.join(" ");
+    $("#remediation-feedback").textContent = "Commands generated for the selected rule. Review before saving or executing manually.";
+  } catch (error) { $("#remediation-feedback").textContent = error.message; }
+  finally { button.disabled = false; }
+});
+$("#remediation-copy").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText($("#remediation-form").elements.commands.value); $("#remediation-feedback").textContent = "Commands copied."; }
+  catch { $("#remediation-feedback").textContent = "Copy unavailable. Select the command text and copy manually."; }
+});
+$("#remediation-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  const button = $("#remediation-save"); button.disabled = true;
+  try {
+    const data = Object.fromEntries(new FormData(event.currentTarget));
+    const payload = { ...data, kind: activeRemediation.kind, category: activeRemediation.category, rule_ids: activeRemediation.rule_ids };
+    const saved = await api(activeRemediation.id ? `/api/remediations/${activeRemediation.id}` : "/api/remediations", { method: activeRemediation.id ? "PUT" : "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload) });
+    activeRemediation = saved;
+    $("#remediation-feedback").textContent = `Saved remediation #${saved.id} (${saved.status}).`;
+    await loadRemediations();
+  } catch (error) { $("#remediation-feedback").textContent = error.message; }
+  finally { button.disabled = false; }
+});

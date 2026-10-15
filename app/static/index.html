@@ -3,18 +3,14 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Firewall Policy Tools</title>
+    <title>Policy Manager</title>
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
     <div class="app-shell">
       <aside class="sidebar">
         <div class="brand">
-          <span class="brand-mark">ASA</span>
-          <div>
-            <strong>Policy Manager</strong>
-            <small>Cisco ASA / Palo Alto / Fortinet / Huawei</small>
-          </div>
+          <strong>Policy Manager</strong>
         </div>
         <nav class="tree-nav">
           <div class="tree-group">
@@ -323,8 +319,11 @@
           </div>
           <div id="risk-summary" class="summary-grid"></div>
           <div id="category-summary" class="cards compact-cards"></div>
+          <p class="muted">Expand a risk category and a finding below, then choose Start Remediation or Generate Commands. Tickets track owner, content and status; commands are reviewed and executed manually.</p>
         </div>
+        <div class="panel"><div class="form-actions"><button type="button" class="secondary" id="risk-expand">Expand risk tree</button><button type="button" class="secondary" id="risk-collapse">Collapse risk tree</button><button type="button" class="primary" id="risk-tickets">Remediation Tickets</button></div></div>
         <div id="finding-list" class="finding-list"></div>
+        <div class="panel"><h2>Remediation Tickets</h2><div id="remediation-list" class="cards"></div></div>
       </section>
 
       <section id="changes" class="view">
@@ -367,6 +366,26 @@
       </main>
     </div>
 
+    <dialog id="remediation-dialog">
+      <form id="remediation-form" class="form-grid">
+        <h2 class="wide">Risk Remediation</h2>
+        <label>Title<input name="title" required maxlength="300" /></label>
+        <label>Owner<input name="owner" required maxlength="200" placeholder="Accountable person" /></label>
+        <label>Status<select name="status"><option>draft</option><option>review</option><option>approved</option><option>in_progress</option><option>implemented</option><option>verified</option><option>rejected</option></select></label>
+        <label>Target rule<select id="remediation-rule"></select></label>
+        <label>Command operation<select id="remediation-operation"><option value="source">Replace source scope</option><option value="destination">Replace destination scope</option><option value="service">Replace service scope</option><option value="disable">Disable selected rule</option></select></label>
+        <label>Confirmed CLI context<select id="remediation-context"><option value="">Select context</option><option value="local-rulebase">PAN-OS local rulebase (correct vsys selected)</option><option value="firewall-policy">FortiGate firewall policy (correct VDOM selected)</option></select></label>
+        <label class="wide">Complete replacement object list (one value per line; unused for disable)<textarea id="remediation-values" placeholder="Existing address/service objects; PAN-OS also accepts address literals"></textarea></label>
+        <div class="wide form-actions"><button type="button" class="secondary" id="remediation-generate">Generate Commands</button><button type="button" class="secondary" id="remediation-copy">Copy Commands</button></div>
+        <p id="remediation-notes" class="wide muted" role="status"></p>
+        <label class="wide">Remediation content<textarea name="plan" required rows="6"></textarea></label>
+        <label class="wide">Candidate commands (editable; manual execution)<textarea name="commands" rows="7" spellcheck="false"></textarea></label>
+        <label class="wide">Rollback commands / steps<textarea name="rollback" rows="5" spellcheck="false"></textarea></label>
+        <p class="wide muted">Saving and status changes only update this ticket. They do not apply or verify device configuration. Review and execute commands manually.</p>
+        <p class="wide" id="remediation-feedback" role="status"></p>
+        <div class="wide form-actions"><button type="submit" class="primary" id="remediation-save">Save Remediation</button><button type="button" class="secondary" id="remediation-close">Close</button></div>
+      </form>
+    </dialog>
     <script src="/static/app.js"></script>
   </body>
 </html>

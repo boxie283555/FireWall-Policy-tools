@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from hashlib import sha256
+from pathlib import Path
+
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from app.remediation import CommandRequest, RemediationRequest, init_remediation, generate_commands, save_remediation, list_remediations
 from app.analyzer import analyze_policies
 from app.device_access import FetchConfigError, fetch_running_config, test_device_connection
 from app.models import ChangeRequest, ChangeStatusRequest, DeviceConnectionRequest, DeviceCredentialRequest, ImportRequest, PolicyPrecheckRequest, Vendor
@@ -42,14 +46,28 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 
+@app.middleware("http")
+async def prevent_stale_browser_content(request, call_next):
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith(("/static/", "/api/")):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 @app.on_event("startup")
 def startup() -> None:
     init_db()
+    init_remediation()
 
 
 @app.get("/")
-def index() -> FileResponse:
-    return FileResponse("app/static/index.html")
+def index() -> HTMLResponse:
+    static_dir = Path(__file__).parent / "static"
+    html = (static_dir / "index.html").read_text(encoding="utf-8")
+    for filename in ("app.js", "styles.css"):
+        version = sha256((static_dir / filename).read_bytes()).hexdigest()[:16]
+        html = html.replace(f'"/static/{filename}"', f'"/static/{filename}?v={version}"')
+    return HTMLResponse(html)
 
 
 @app.get("/api/dashboard")
@@ -335,3 +353,36 @@ def _csv_response(filename: str, content: str) -> Response:
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@app.post("/api/remediation-commands")
+def api_remediation_commands(request: CommandRequest):
+    try:
+        return generate_commands(request)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Rule not found") from None
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+
+
+@app.get("/api/remediations")
+def api_remediations():
+    return list_remediations()
+
+
+@app.post("/api/remediations")
+def api_create_remediation(request: RemediationRequest):
+    try:
+        return save_remediation(request)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+
+
+@app.put("/api/remediations/{record_id}")
+def api_update_remediation(record_id: int, request: RemediationRequest):
+    try:
+        return save_remediation(request, record_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Remediation not found") from None
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
