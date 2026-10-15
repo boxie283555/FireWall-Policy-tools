@@ -1,4 +1,5 @@
 const titles = {
+  panos: ["PAN-OS Online", "Edit and optimize live candidate policies; review and commit separately."],
   dashboard: ["Dashboard", "Device policy inventory and risk status."],
   devices: ["Device Access", "Add firewall management IPs and fetch running configuration over SSH, Telnet, API/HTTPS, or NETCONF."],
   import: ["Import Config", "Load ASA, PAN-OS, Fortinet, or Huawei configuration files."],
@@ -57,7 +58,11 @@ function escapeHtml(value) {
 function textList(items, limit = 6) {
   if (!items || !items.length) return '<span class="pill">any</span>';
   const shown = items.slice(0, limit).map((item) => `<span class="pill">${escapeHtml(item)}</span>`).join("");
-  return items.length > limit ? `${shown}<span class="pill">+${items.length - limit}</span>` : shown;
+  if (items.length > limit) {
+    const remaining = items.slice(limit).map(item => `<span class="pill">${escapeHtml(item)}</span>`).join("");
+    return `${shown}<details class="address-list-more"><summary class="pill" aria-label="Show all items"><span class="address-more-count">+${items.length - limit}</span><span class="address-more-less">Show less</span></summary>${remaining}</details>`;
+  }
+  return shown;
 }
 
 function globalVendor() {
@@ -533,7 +538,7 @@ async function loadAnalysis() {
       <p><strong>Recommended improvement:</strong> ${escapeHtml(f.recommendation)}</p>
       <ol>${riskSteps(f).map(step => `<li>${escapeHtml(step)}</li>`).join("")}
         <li>Back up the configuration and record rollback steps before the change. After implementation, reimport the configuration and rerun the risk review.</li></ol>
-      <div class="form-actions"><button class="primary risk-start" data-index="${index}" type="button">Start Remediation</button><button class="secondary risk-command" data-index="${index}" type="button">Generate Commands</button><button class="secondary risk-download" data-index="${index}" type="button">Download Remediation Plan</button></div>
+      <div class="form-actions">${rules.filter(r => r.vendor === "palo_alto").map(r => `<button type="button" class="secondary risk-online" data-rule-id="${escapeHtml(r.id)}">Edit online: ${escapeHtml(r.device_name)} / ${escapeHtml(r.rule_name)}</button>`).join("")}<button class="primary risk-start" data-index="${index}" type="button">Start Remediation</button><button class="secondary risk-command" data-index="${index}" type="button">Generate Commands</button><button class="secondary risk-download" data-index="${index}" type="button">Download Remediation Plan</button></div>
       <details class="risk-rules"><summary>Inspect affected rules (${rules.length})</summary>
         ${rules.length ? rules.map(rule => `<div class="mini-card"><strong>${escapeHtml(rule.device_name)} / ${escapeHtml(rule.rule_name)}</strong>
           <span>${escapeHtml(rule.vendor)} · ID: ${escapeHtml(rule.id)} · Line: ${escapeHtml(rule.line_no ?? "unknown")} · ${rule.enabled ? "Enabled" : "Disabled"}</span>
@@ -554,6 +559,10 @@ async function loadAnalysis() {
   $$(".risk-start, .risk-command").forEach(button => button.addEventListener("click", () => {
     openRemediation(rows[Number(button.dataset.index)]);
     if (button.classList.contains("risk-command")) $("#remediation-operation").focus();
+  }));
+  $$(".risk-online").forEach(button => button.addEventListener("click", () => {
+    const rule = riskRules.find(r => r.id === button.dataset.ruleId);
+    if (rule) openPanosRisk(rule);
   }));
   await loadRemediations();
   $$(".risk-download").forEach(button => button.addEventListener("click", () => {
@@ -1104,6 +1113,7 @@ function loadView(view = document.querySelector(".view.active").id) {
     changes: loadChanges,
     audit: loadAudit,
     devices: loadDevices,
+    panos: async () => { if (panSession) await panReload(); },
     import: async () => {},
   };
   return loaders[view]().catch((error) => alert(error.message));

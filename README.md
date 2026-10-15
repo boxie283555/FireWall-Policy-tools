@@ -229,3 +229,21 @@ Risk Findings uses a collapsible tree: security policy or NAT → risk category 
 Command generation currently supports PAN-OS local security/NAT rules and FortiGate firewall policies: disable a selected rule or replace its complete source, destination, or service scope. Confirm the correct vsys/VDOM and enter existing object names, one per line. The generator includes rollback commands and does not execute anything. PAN-OS commit is left to the reviewer. ASA, Huawei, Panorama pre/post rules, and FortiGate NAT require a manually reviewed command plan and display an explicit unsupported-context message. Saved workflow statuses are manual records; they do not imply device execution or automatic risk verification.
 
 Template references: [PAN-OS CLI](https://docs.paloaltonetworks.com/ngfw/pan-os-cli-quick-start/cli-command-hierarchy/pan-os-11-1-configure-cli-command-hierarchy), [FortiGate policy](https://docs.fortinet.com/document/fortigate/7.6.3/administration-guide/656084/firewall-policy).
+
+## PAN-OS Online Policy Editing
+
+Open **PAN-OS Online** and enter the management host, HTTPS port, account and password/API key. Certificate verification is enabled by default; select the explicit lab self-signed option only for your lab device. Credentials are not written to SQLite or browser storage. An opaque session handle remains in page memory and expires after 30 minutes of inactivity; server restart or Disconnect clears the connection.
+
+Connections default to **Read only / Preview**: the server blocks candidate writes and commits while allowing reads, optimization previews, and existing job status queries. Reconnect explicitly in **Edit candidate / Commit** mode to execute reviewed changes.
+
+Select a virtual system and security/NAT rulebase to read live candidate policies. Security policies have a field editor, while NAT uses the complete rule XML. Existing security profiles and other fields outside the editor are preserved. New rules start disabled. The existing risk engine analyzes the live security rules and links findings to **Edit / Optimize**. Imported Palo Alto risk cards also offer **Edit online** links, which require confirming the correct management host and vsys.
+
+Previews compare risk counts before and after the proposed operation, including resolved and introduced findings. These comparisons use the existing heuristic engine and do not prove traffic impact or resolve all object dependencies. The workspace also accepts an existing commit job ID independently of initiating a commit.
+
+Use **Preview Edit & Risks**, **Preview Delete** or **Preview Move**, review the exact diff, then choose **Confirm Save to Candidate**. Saving does not commit. A changed candidate configuration invalidates the preview; reload and review again. Timed-out writes are not retried automatically. These checks reduce accidental overwrites but do not provide an atomic device-side lock against another administrator writing at the same moment.
+
+**Review Full Commit** displays a device-wide candidate/running diff with sensitive values masked. **Confirm Full Commit** includes all pending device changes, even those outside the selected policy scope or made by other administrators. Check the returned job ID until it finishes; only FIN/OK is reported as success. Download the diff before a change for review and rollback planning. Device-side object and dependency validation remains authoritative; heuristic risk analysis is not a substitute.
+
+Scope: direct firewall connections and local per-vsys security/NAT rulebases. Panorama pre/post policies and automatic remediation are not supported by this editor. Online edits do not automatically replace the offline imported inventory: fetch/import the configuration after a successful commit when you want offline reports to reflect it.
+
+References: [PAN-OS configuration API](https://docs.paloaltonetworks.com/ngfw/api/pan-os-xml-api-request-types-and-actions/configuration-api), [commit API](https://docs.paloaltonetworks.com/ngfw/api/pan-os-xml-api-request-types-and-actions/commit), [asynchronous jobs](https://docs.paloaltonetworks.com/ngfw/api/pan-os-xml-api-request-types-and-actions/asynchronous-and-synchronous-requests-to-the-pan-os-xml-api).

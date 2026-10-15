@@ -32,6 +32,10 @@
             <button class="nav" data-view="changes">Change Requests</button>
           </div>
           <div class="tree-group">
+            <div class="tree-title">Online Management</div>
+            <button class="nav" data-view="panos">PAN-OS Online</button>
+          </div>
+          <div class="tree-group">
             <div class="tree-title">Policy Analysis</div>
             <button class="nav" data-view="visualization">Path / Topology</button>
             <button class="nav" data-view="analysis">Risk Findings</button>
@@ -307,6 +311,45 @@
         </div>
       </section>
 
+      <section id="panos" class="view">
+        <div class="panel">
+          <h2>PAN-OS Online Policies</h2>
+          <p class="muted">Connect directly to a firewall. Edit local security or NAT rules in its candidate configuration; review and commit separately.</p>
+          <form id="pan-connect" class="form-grid">
+            <label>Management host<input name="host" required placeholder="192.168.20.171" /></label>
+            <label>HTTPS port<input name="port" type="number" value="443" min="1" max="65535" required /></label>
+            <label>Username<input name="username" value="admin" required autocomplete="username" /></label>
+            <label>Authentication<select name="auth_mode"><option value="password">Password</option><option value="api_key">API key</option></select></label>
+            <label>Credential (not saved)<input name="credential" type="password" required autocomplete="off" /></label>
+            <label>Connection mode<select name="read_only"><option value="true">Read only / Preview</option><option value="false">Edit candidate / Commit</option></select></label>
+            <label>Certificate validation<select name="verify_tls"><option value="true">Verify certificate</option><option value="false">Lab self-signed certificate</option></select></label>
+            <div class="wide form-actions"><button class="primary" type="submit">Connect &amp; Read</button><button class="secondary" type="button" id="pan-disconnect">Disconnect</button></div>
+          </form>
+          <p id="pan-status" role="status">Not connected.</p>
+          <p id="pan-target" class="muted"></p>
+        </div>
+        <div id="pan-workspace" hidden>
+          <div class="panel">
+            <div class="form-actions">
+              <label>Virtual system<select id="pan-vsys"></select></label>
+              <label>Rule type<select id="pan-kind"><option value="security">Security</option><option value="nat">NAT</option></select></label>
+              <button type="button" class="secondary" id="pan-reload">Reload Candidate</button>
+              <button type="button" class="primary" id="pan-new">Add Rule</button>
+              <button type="button" class="secondary" id="pan-commit-preview">Review Full Commit</button>
+            </div>
+            <p id="pan-pending" class="muted"></p>
+            <div class="form-actions"><label>Existing commit job ID<input id="pan-existing-job" type="number" min="0" /></label><button type="button" class="secondary" id="pan-existing-job-check">Check Job Status</button></div><p id="pan-existing-job-status" role="status"></p>
+            <details><summary>Candidate vs running rules in this scope</summary><pre id="pan-scope-diff" class="pan-diff"></pre></details>
+          </div>
+          <div class="panel">
+            <label>Find rule<input id="pan-search" placeholder="Rule name, source or destination" /></label>
+            <div class="table-wrap"><table><thead><tr><th>Order</th><th>Rule</th><th>Source</th><th>Destination</th><th>Action</th><th>Status</th><th>Operation</th></tr></thead><tbody id="pan-rules"></tbody></table></div>
+            <div class="form-actions"><button type="button" id="pan-prev" class="secondary">Previous</button><span id="pan-page"></span><button type="button" id="pan-next" class="secondary">Next</button></div>
+          </div>
+          <div class="panel"><h2>Online Optimization Findings</h2><p class="muted">Uses the existing policy risk engine against the live candidate rules. These heuristic checks do not resolve every object, schedule or application dependency.</p><div id="pan-findings"></div></div>
+        </div>
+      </section>
+
       <section id="analysis" class="view">
         <div class="panel">
           <div class="section-head">
@@ -386,6 +429,45 @@
         <div class="wide form-actions"><button type="submit" class="primary" id="remediation-save">Save Remediation</button><button type="button" class="secondary" id="remediation-close">Close</button></div>
       </form>
     </dialog>
+    <dialog id="pan-editor" class="pan-dialog">
+      <form id="pan-edit-form" class="form-grid">
+        <h2 class="wide" id="pan-editor-title">Edit Online Policy</h2>
+        <p id="pan-edit-context" class="wide muted"></p>
+        <label>Rule name<input id="pan-name" required /></label>
+        <label>Enabled<select id="pan-enabled"><option value="yes">Enabled</option><option value="no">Disabled</option></select></label>
+        <div id="pan-security-fields" class="wide form-grid">
+          <label>Source zones (one per line)<textarea id="pan-from" required></textarea></label>
+          <label>Destination zones (one per line)<textarea id="pan-to" required></textarea></label>
+          <label>Sources (one per line)<textarea id="pan-source" required></textarea></label>
+          <label>Destinations (one per line)<textarea id="pan-destination" required></textarea></label>
+          <label>Services (existing objects)<textarea id="pan-service" required></textarea></label>
+          <label>Applications (one per line)<textarea id="pan-application" required></textarea></label>
+          <label>Action<select id="pan-action"><option>allow</option><option>deny</option><option>drop</option><option>reset-client</option><option>reset-server</option><option>reset-both</option></select></label>
+          <label>Description<input id="pan-description" /></label>
+        </div>
+        <label id="pan-nat-field" class="wide" hidden>NAT rule XML (complete entry)<textarea id="pan-nat-xml" rows="12" spellcheck="false"></textarea></label>
+        <details class="wide"><summary>Original rule XML</summary><pre id="pan-original" class="pan-diff"></pre></details>
+        <div class="wide form-actions"><button type="submit" class="primary">Preview Edit &amp; Risks</button><button type="button" id="pan-delete" class="secondary">Preview Delete</button></div>
+        <div class="wide form-actions" id="pan-move-controls">
+          <label>Move<select id="pan-where"><option value="before">Before</option><option value="after">After</option><option value="top">Top</option><option value="bottom">Bottom</option></select></label>
+          <label>Reference rule<select id="pan-destination-rule"></select></label>
+          <button type="button" id="pan-move" class="secondary">Preview Move</button>
+        </div>
+        <p class="wide" id="pan-edit-status" role="status"></p>
+        <button type="button" class="secondary wide" id="pan-edit-close">Close</button>
+      </form>
+    </dialog>
+    <dialog id="pan-preview" class="pan-dialog">
+      <h2 id="pan-preview-title">Review Change</h2><p id="pan-preview-message"></p>
+      <div id="pan-risk-changes"></div>
+      <pre id="pan-preview-diff" class="pan-diff"></pre>
+      <details><summary>Risk findings after this change</summary><div id="pan-preview-findings"></div></details>
+      <p id="pan-execute-status" role="status"></p>
+      <div class="form-actions"><button type="button" class="secondary" id="pan-download-diff">Download Diff</button><button type="button" class="primary" id="pan-execute">Save to Candidate</button><button type="button" class="secondary" id="pan-preview-close">Close</button></div>
+      <div id="pan-job-controls" hidden><label>Commit job ID<input id="pan-job" type="number" min="0" /></label><button type="button" class="secondary" id="pan-job-check">Check Job Status</button></div>
+    </dialog>
+
     <script src="/static/app.js"></script>
+    <script src="/static/panos.js"></script>
   </body>
 </html>

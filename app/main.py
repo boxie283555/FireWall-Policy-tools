@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from app.remediation import CommandRequest, RemediationRequest, init_remediation, generate_commands, save_remediation, list_remediations
+from app.panos_online import router as panos_router
 from app.analyzer import analyze_policies
 from app.device_access import FetchConfigError, fetch_running_config, test_device_connection
 from app.models import ChangeRequest, ChangeStatusRequest, DeviceConnectionRequest, DeviceCredentialRequest, ImportRequest, PolicyPrecheckRequest, Vendor
@@ -35,7 +36,8 @@ from app.storage import (
 )
 from app.visualization import object_dependencies, object_dependency_detail, path_analysis, policy_dependency_detail, rule_order, topology, zone_matrix
 
-app = FastAPI(title="Firewall Policy Tools", version="0.1.0")
+app = FastAPI(title="Policy Manager", version="0.1.0")
+app.include_router(panos_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -64,7 +66,7 @@ def startup() -> None:
 def index() -> HTMLResponse:
     static_dir = Path(__file__).parent / "static"
     html = (static_dir / "index.html").read_text(encoding="utf-8")
-    for filename in ("app.js", "styles.css"):
+    for filename in ("app.js", "panos.js", "styles.css"):
         version = sha256((static_dir / filename).read_bytes()).hexdigest()[:16]
         html = html.replace(f'"/static/{filename}"', f'"/static/{filename}?v={version}"')
     return HTMLResponse(html)

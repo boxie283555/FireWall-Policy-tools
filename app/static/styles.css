@@ -799,3 +799,18 @@ tbody tr:hover {
 #remediation-form label { display: flex; flex-direction: column; gap: 6px; }
 #remediation-form textarea { width: 100%; box-sizing: border-box; }
 #remediation-feedback { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.pan-dialog { box-sizing: border-box; width: min(980px, 94vw); max-height: 92vh; border: 1px solid #cbd5e1; border-radius: 8px; padding: 24px; overflow: auto; }
+.pan-dialog::backdrop { background: rgb(15 23 42 / 45%); }
+.pan-diff { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 420px; overflow: auto; background: #f5f7fa; padding: 12px; }
+#panos [hidden], .pan-dialog [hidden] { display: none !important; }
+#pan-findings { max-height: 480px; overflow: auto; }
+#pan-status, #pan-edit-status, #pan-execute-status { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.address-list-more { display: inline; }
+.address-list-more > summary { display: inline-block; cursor: pointer; color: var(--primary, #2563eb); list-style: none; }
+.address-list-more > summary::-webkit-details-marker { display: none; }
+.address-list-more > summary:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+.address-list-more .address-more-less { display: none; }
+.address-list-more[open] .address-more-count { display: none; }
+.address-list-more[open] .address-more-less { display: inline; }
