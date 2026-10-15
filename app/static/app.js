@@ -230,19 +230,45 @@ function clearPolicyFilters() {
     $(`#${id}`).value = "";
   });
   $("#policy-action").value = "";
+  policyColumnFilters = {};
   loadPolicies();
 }
 
-async function loadPolicies() {
-  const policies = await api(`/api/policies?${policyFilterParams()}`);
+let policyTableRows = [];
+let policyColumnFilters = {};
+let policyTableLoadSequence = 0;
+const policyColumns = {
+  Vendor: p => [p.vendor], Device: p => [p.device_name], Rule: p => [p.rule_name],
+  Zone: p => [...(p.source_zones || []), ...(p.destination_zones || [])],
+  Source: p => p.source_addresses || [], Destination: p => p.destination_addresses || [],
+  Service: p => p.services || [], 'App/User': p => [...(p.applications || []), ...(p.users || [])],
+  Action: p => [p.action], Status: p => [p.enabled ? 'enabled' : 'disabled'],
+};
+function matchesPolicyColumns(policy, except) {
+  return Object.entries(policyColumnFilters).every(([column, value]) =>
+    column === except || !value || policyColumns[column](policy).includes(value));
+}
+function renderPolicyTable() {
+  for (const [column, valuesFor] of Object.entries(policyColumns)) {
+    const select = document.querySelector(`[data-policy-column="${column}"]`);
+    const values = new Set(policyTableRows.filter(p => matchesPolicyColumns(p, column)).flatMap(valuesFor).filter(Boolean));
+    const selected = policyColumnFilters[column] || '';
+    if (selected) values.add(selected);
+    select.replaceChildren(new Option('All', ''));
+    [...values].sort((a, b) => a.localeCompare(b)).forEach(value => select.add(new Option(value, value)));
+    select.value = selected;
+    select.classList.toggle('column-filter-active', !!selected);
+  }
+  const policies = policyTableRows.filter(p => matchesPolicyColumns(p));
   $("#policy-count").textContent = policies.length;
   $("#policy-table").innerHTML = policies
     .map(
       (p, index) => `<tr>
         <td>${index + 1}</td>
+        <td>${escapeHtml(p.line_no ?? "—")}</td>
         <td>${escapeHtml(p.vendor)}</td>
         <td>${escapeHtml(p.device_name)}</td>
-        <td><strong>${escapeHtml(p.rule_name)}</strong><div class="muted">line ${escapeHtml(p.line_no || "")}</div></td>
+        <td><strong>${escapeHtml(p.rule_name)}</strong></td>
         <td>${textList(p.source_zones, 3)}<span class="arrow">→</span>${textList(p.destination_zones, 3)}</td>
         <td>${textList(p.source_addresses)}</td>
         <td>${textList(p.destination_addresses)}</td>
@@ -255,6 +281,23 @@ async function loadPolicies() {
     .join("");
 }
 
+async function loadPolicies() {
+  const sequence = ++policyTableLoadSequence;
+  const policies = await api(`/api/policies?${policyFilterParams()}`);
+  if (sequence !== policyTableLoadSequence) return;
+  policyTableRows = policies;
+  renderPolicyTable();
+}
+for (const column of Object.keys(policyColumns)) {
+  const header = [...document.querySelectorAll('#policies thead th')].find(th => th.textContent === column);
+  const select = document.createElement('select');
+  select.dataset.policyColumn = column; select.className = 'policy-column-filter';
+  select.setAttribute('aria-label', `Filter ${column}`);
+  select.add(new Option('All', ''));
+  select.addEventListener('change', () => { policyColumnFilters[column] = select.value; renderPolicyTable(); });
+  header.append(select);
+}
+
 function natFilterParams() {
   return paramsFrom({
     query: $("#nat-query").value,
@@ -265,19 +308,54 @@ function natFilterParams() {
 function clearNatFilters() {
   $("#nat-query").value = "";
   $("#nat-type").value = "";
+  natColumnFilters = {};
+  Object.keys(natFieldFilters).forEach(id => document.getElementById(id).value = "");
   loadNatRules();
 }
 
-async function loadNatRules() {
-  const [rules, findings] = await Promise.all([api(`/api/nat-rules?${natFilterParams()}`), api(`/api/nat-analysis?${paramsFrom({})}`)]);
+let natTableRows = [];
+let natColumnFilters = {};
+let natLoadSequence = 0;
+const natFieldFilters = {
+  'nat-source-zone': p => p.source_zones || [], 'nat-destination-zone': p => p.destination_zones || [],
+  'nat-original-source': p => p.original_sources || [], 'nat-original-destination': p => p.original_destinations || [],
+  'nat-translated-source': p => p.translated_sources || [], 'nat-translated-destination': p => p.translated_destinations || [],
+  'nat-service': p => [...(p.original_services || []), ...(p.translated_services || [])],
+};
+const natColumns = {
+  Vendor: p => [p.vendor], Device: p => [p.device_name], 'NAT Rule': p => [p.rule_name], Type: p => [p.nat_type],
+  Zone: p => [...(p.source_zones || []), ...(p.destination_zones || [])],
+  Original: p => [...(p.original_sources || []), ...(p.original_destinations || [])],
+  Translated: p => [...(p.translated_sources || []), ...(p.translated_destinations || [])],
+  Service: natFieldFilters['nat-service'], Status: p => [p.enabled ? 'enabled' : 'disabled'],
+};
+function matchesNatFilters(rule, except) {
+  return Object.entries(natColumnFilters).every(([column, value]) => column === except || !value || natColumns[column](rule).includes(value)) &&
+    Object.entries(natFieldFilters).every(([id, valuesFor]) => {
+      const query = document.getElementById(id).value.trim().toLowerCase();
+      return !query || valuesFor(rule).some(value => value.toLowerCase().includes(query));
+    });
+}
+function renderNatTable() {
+  for (const [column, valuesFor] of Object.entries(natColumns)) {
+    const select = document.querySelector(`[data-nat-column="${column}"]`);
+    const values = new Set(natTableRows.filter(rule => matchesNatFilters(rule, column)).flatMap(valuesFor).filter(Boolean));
+    const selected = natColumnFilters[column] || '';
+    if (selected) values.add(selected);
+    select.replaceChildren(new Option('All', ''));
+    [...values].sort((a,b) => a.localeCompare(b)).forEach(value => select.add(new Option(value, value)));
+    select.value = selected; select.classList.toggle('column-filter-active', !!selected);
+  }
+  const rules = natTableRows.filter(rule => matchesNatFilters(rule));
   $("#nat-count").textContent = rules.length;
   $("#nat-table").innerHTML = rules
     .map(
       (rule, index) => `<tr>
         <td>${index + 1}</td>
+        <td>${escapeHtml(rule.line_no ?? "—")}</td>
         <td>${escapeHtml(rule.vendor)}</td>
         <td>${escapeHtml(rule.device_name)}</td>
-        <td><strong>${escapeHtml(rule.rule_name)}</strong><div class="muted">line ${escapeHtml(rule.line_no || "")}</div></td>
+        <td><strong>${escapeHtml(rule.rule_name)}</strong></td>
         <td>${escapeHtml(rule.nat_type)}</td>
         <td>${textList(rule.source_zones, 2)}<span class="arrow">→</span>${textList(rule.destination_zones, 2)}</td>
         <td>${textList([...(rule.original_sources || []), ...(rule.original_destinations || [])], 5)}</td>
@@ -287,6 +365,23 @@ async function loadNatRules() {
       </tr>`
     )
     .join("");
+}
+for (const column of Object.keys(natColumns)) {
+  const header = [...document.querySelectorAll('#nat thead th')].find(th => th.textContent === column);
+  const select = document.createElement('select'); select.dataset.natColumn = column;
+  select.className = 'policy-column-filter'; select.setAttribute('aria-label', `Filter NAT ${column}`);
+  select.add(new Option('All', ''));
+  select.addEventListener('change', () => { natColumnFilters[column] = select.value; renderNatTable(); });
+  header.append(select);
+}
+Object.keys(natFieldFilters).forEach(id => document.getElementById(id).addEventListener('input', renderNatTable));
+
+async function loadNatRules() {
+  const sequence = ++natLoadSequence;
+  const [rules, findings] = await Promise.all([api(`/api/nat-rules?${natFilterParams()}`), api(`/api/nat-analysis?${paramsFrom({})}`)]);
+  if (sequence !== natLoadSequence) return;
+  natTableRows = rules;
+  renderNatTable();
   $("#nat-analysis-list").innerHTML = findings.length
     ? findings
         .map(
@@ -1306,4 +1401,50 @@ $("#remediation-form").addEventListener("submit", async event => {
     await loadRemediations();
   } catch (error) { $("#remediation-feedback").textContent = error.message; }
   finally { button.disabled = false; }
+});
+
+// Explicit dropdowns complement free-text policy filters.
+const policyChoiceFields = {
+  'policy-source-zone': 'zones', 'policy-destination-zone': 'zones',
+  'policy-source': 'addresses', 'policy-destination': 'addresses',
+  'policy-service': 'services', 'policy-application': 'applications',
+  'policy-user': 'users', 'policy-query': 'policies',
+};
+const allChoiceFields = {...policyChoiceFields, ...natFieldFilters, 'nat-query': p => [p.rule_name]};
+for (const [id, field] of Object.entries(allChoiceFields)) {
+  const input = document.getElementById(id);
+  const wrapper = document.createElement('div'); wrapper.className = 'policy-choice';
+  input.before(wrapper); wrapper.append(input);
+  const picker = document.createElement('details'); picker.className = 'policy-choice-picker';
+  picker.innerHTML = `<summary aria-label="Choose ${escapeHtml(input.placeholder)}">▾</summary><div class="policy-choice-menu"><input type="search" placeholder="Search options" aria-label="Search ${escapeHtml(input.placeholder)} options"><div class="policy-choice-options"></div><span class="muted policy-choice-count"></span></div>`;
+  wrapper.append(picker);
+  const search = picker.querySelector('input');
+  const options = picker.querySelector('.policy-choice-options');
+  function renderChoices() {
+    const query = search.value.toLowerCase();
+    const available = typeof field === 'function' ? natTableRows.flatMap(field) : (inventoryCache?.values?.[field] || []);
+    const values = [...new Set(available)].filter(value => String(value).toLowerCase().includes(query));
+    options.replaceChildren();
+    for (const value of ['', ...values.slice(0, 100)]) {
+      const button = document.createElement('button'); button.type = 'button';
+      button.textContent = value || 'All / Clear filter';
+      button.addEventListener('click', () => {
+        input.value = value; picker.open = false;
+        input.dispatchEvent(new Event('input', {bubbles:true})); input.focus();
+      });
+      options.append(button);
+    }
+    picker.querySelector('.policy-choice-count').textContent = values.length > 100 ? `${values.length} options. Showing 100; search to narrow.` : `${values.length} options`;
+  }
+  picker.querySelector('summary').addEventListener('click', () => {
+    if (picker.open) return;
+    document.querySelectorAll('.policy-choice-picker').forEach(other => { if (other !== picker) other.open = false; });
+    search.value = ''; renderChoices();
+    requestAnimationFrame(() => { if (picker.open) search.focus(); });
+  });
+  search.addEventListener('input', renderChoices);
+  picker.addEventListener('keydown', event => { if (event.key === 'Escape') { picker.open = false; picker.querySelector('summary').focus(); } });
+}
+document.addEventListener('click', event => {
+  document.querySelectorAll('.policy-choice-picker[open]').forEach(picker => { if (!picker.contains(event.target)) picker.open = false; });
 });

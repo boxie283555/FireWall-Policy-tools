@@ -191,7 +191,7 @@
           <table>
             <thead>
               <tr>
-                <th>#</th><th>Vendor</th><th>Device</th><th>Rule</th><th>Zone</th><th>Source</th><th>Destination</th><th>Service</th><th>App/User</th><th>Action</th><th>Status</th>
+                <th>#</th><th title="Original line number recorded from the imported configuration">Config Line</th><th>Vendor</th><th>Device</th><th>Rule</th><th>Zone</th><th>Source</th><th>Destination</th><th>Service</th><th>App/User</th><th>Action</th><th>Status</th>
               </tr>
             </thead>
             <tbody id="policy-table"></tbody>
@@ -210,6 +210,13 @@
               <option value="dynamic">dynamic</option>
               <option value="manual">manual</option>
             </select>
+            <input id="nat-source-zone" placeholder="Source Zone / ACL" />
+            <input id="nat-destination-zone" placeholder="Destination Zone" />
+            <input id="nat-original-source" placeholder="Original Source" />
+            <input id="nat-original-destination" placeholder="Original Destination" />
+            <input id="nat-translated-source" placeholder="Translated Source" />
+            <input id="nat-translated-destination" placeholder="Translated Destination" />
+            <input id="nat-service" placeholder="Original / Translated Service" />
             <input id="nat-query" placeholder="Search NAT name, original, translated, zone, or raw config" />
             <button class="secondary" id="clear-nat-filters" type="button">Clear Filters</button>
           </div>
@@ -219,7 +226,7 @@
           <table>
             <thead>
               <tr>
-                <th>#</th><th>Vendor</th><th>Device</th><th>NAT Rule</th><th>Type</th><th>Zone</th><th>Original</th><th>Translated</th><th>Service</th><th>Status</th>
+                <th>#</th><th title="Original line number recorded from the imported configuration">Config Line</th><th>Vendor</th><th>Device</th><th>NAT Rule</th><th>Type</th><th>Zone</th><th>Original</th><th>Translated</th><th>Service</th><th>Status</th>
               </tr>
             </thead>
             <tbody id="nat-table"></tbody>
@@ -227,6 +234,7 @@
         </div>
         <div class="panel">
           <h2>NAT Analysis</h2>
+          <p class="muted">Findings cover the selected device/vendor scope, independently of table filters.</p>
           <div id="nat-analysis-list" class="cards"></div>
         </div>
       </section>

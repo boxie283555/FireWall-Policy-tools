@@ -814,3 +814,16 @@ tbody tr:hover {
 .address-list-more .address-more-less { display: none; }
 .address-list-more[open] .address-more-count { display: none; }
 .address-list-more[open] .address-more-less { display: inline; }
+
+.policy-choice { display: flex; position: relative; min-width: 0; }
+.policy-choice > input { border-radius: 4px 0 0 4px; }
+.policy-choice-picker > summary { cursor: pointer; list-style: none; padding: 7px 9px; border: 1px solid var(--border, #cbd5e1); border-left: 0; border-radius: 0 4px 4px 0; background: #f4f7fa; }
+.policy-choice-picker > summary::-webkit-details-marker { display: none; }
+.policy-choice-menu { position: absolute; top: 100%; left: 0; z-index: 30; width: min(300px, 80vw); padding: 10px; border: 1px solid #cbd5e1; border-radius: 6px; background: white; box-shadow: 0 6px 18px #0002; }
+.filter-strip .policy-choice-menu input { width: 100%; }
+.policy-choice-options { max-height: 240px; overflow: auto; margin: 6px 0; }
+.policy-choice-options button { display: block; width: 100%; text-align: left; white-space: normal; overflow-wrap: anywhere; background: white; color: #243247; border: 0; }
+.policy-choice-options button:hover, .policy-choice-options button:focus-visible { background: #eaf2ff; }
+
+.policy-column-filter { display: block; width: 100%; min-width: 85px; max-width: 180px; margin-top: 6px; padding: 4px; font-size: 12px; font-weight: normal; }
+.policy-column-filter.column-filter-active { border-color: #2563eb; background: #eaf2ff; }
